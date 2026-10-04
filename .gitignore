@@ -1,0 +1,7 @@
+# 构建中间产物（词表已内嵌进 userscript，此文件仅留档，故意保留入库）
+# coca10k.json
+
+# 系统杂项
+*.log
+.DS_Store
+Thumbs.db
