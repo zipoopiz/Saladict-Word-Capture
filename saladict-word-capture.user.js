@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.2
+// @version      0.3.3
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @match        *://*/*
@@ -323,6 +323,13 @@
     const headers = { 'x-amz-date': opts.amzDate, Authorization: auth };
     if (opts.s3Compat) headers['x-amz-content-sha256'] = payloadHash;
     return headers;
+  }
+
+  // 从 S3/W3C 错误 XML 里提取 Code 和 Message，便于 toast 展示
+  function xmlErr(text) {
+    const c = /<Code>([^<]+)<\/Code>/.exec(text || '');
+    const m = /<Message>([^<]+)<\/Message>/.exec(text || '');
+    return c ? c[1] + (m ? ': ' + m[1].trim().slice(0, 120) : '') : String(text || '').slice(0, 150);
   }
 
   function buildBackupDump(knownArr, savedArr, personalArr, queueArr, settings) {

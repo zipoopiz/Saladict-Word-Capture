@@ -10,7 +10,7 @@ const core = src.split('//<<CORE')[1].split('//CORE>>')[0];
 const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
   clozeify, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
-  sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup };`)();
+  sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr };`)();
 
 let passed = 0;
 const pending = [];
@@ -252,6 +252,15 @@ t('s3RegionService: 非 OSS 服务保持标准 s3', () => {
     { region: 'auto', service: 's3' });
   assert.deepEqual(fns.s3RegionService('s3.amazonaws.com', ''),
     { region: 'us-east-1', service: 's3' });
+});
+t('xmlErr: 提取 OSS 错误码与消息', () => {
+  const xml = '<?xml version="1.0" encoding="UTF-8"?><Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match</Message><RequestId>x</RequestId></Error>';
+  assert.equal(fns.xmlErr(xml), 'SignatureDoesNotMatch: The request signature we calculated does not match');
+});
+t('xmlErr: 无 Code 时原样截断', () => {
+  assert.equal(fns.xmlErr('<html>oops</html>'), '<html>oops</html>');
+  assert.equal(fns.xmlErr(''), '');
+  assert.equal(fns.xmlErr(null), '');
 });
 
 await Promise.all(pending);
