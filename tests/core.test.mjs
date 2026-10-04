@@ -1,7 +1,7 @@
 // 从 userscript 抽出 //<<CORE ... //CORE>> 纯逻辑区做单元测试
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import { webcrypto, createHash } from 'node:crypto';
+import { webcrypto, createHash, createHmac } from 'node:crypto';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18 下的 WebCrypto
 
@@ -10,7 +10,8 @@ const core = src.split('//<<CORE')[1].split('//CORE>>')[0];
 const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
   clozeify, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
-  sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr };`)();
+  sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr,
+  v2StringToSign, v2AuthHeaders, isOssHost };`)();
 
 let passed = 0;
 const pending = [];
@@ -261,6 +262,40 @@ t('xmlErr: 无 Code 时原样截断', () => {
   assert.equal(fns.xmlErr('<html>oops</html>'), '<html>oops</html>');
   assert.equal(fns.xmlErr(''), '');
   assert.equal(fns.xmlErr(null), '');
+});
+
+// ---- AWS V2 签名（OSS 主用） ----
+t('isOssHost: 识别 OSS 虚拟主机/路径式/加速端点', () => {
+  assert.ok(fns.isOssHost('mybk.oss-cn-hangzhou.aliyuncs.com'));
+  assert.ok(fns.isOssHost('oss-cn-beijing.aliyuncs.com'));
+  assert.ok(fns.isOssHost('mybk.oss-accelerate.aliyuncs.com'));
+  assert.ok(!fns.isOssHost('acc.r2.cloudflarestorage.com'));
+});
+t('v2StringToSign: x-amz-date 替代 Date 段', () => {
+  assert.equal(fns.v2StringToSign('PUT', 'application/json', '20261004T000000Z', '/mybk/swc-backup.json'),
+    'PUT\n\napplication/json\n\nx-amz-date:20261004T000000Z\n/mybk/swc-backup.json');
+});
+t('v2AuthHeaders: 签名与 node:crypto 独立实现一致', async () => {
+  const h = await fns.v2AuthHeaders({
+    method: 'PUT', url: 'https://mybk.oss-cn-hangzhou.aliyuncs.com/swc-backup.json',
+    endpoint: 'https://mybk.oss-cn-hangzhou.aliyuncs.com',
+    contentType: 'application/json', accessKey: 'AK', secretKey: 'SK',
+    amzDate: '20261004T000000Z'
+  });
+  const sts = 'PUT\n\napplication/json\n\nx-amz-date:20261004T000000Z\n/mybk/swc-backup.json';
+  const expected = createHmac('sha1', 'SK').update(sts).digest('base64');
+  assert.equal(h.Authorization, 'AWS AK:' + expected);
+  assert.equal(h['x-amz-date'], '20261004T000000Z');
+});
+t('v2AuthHeaders: 路径式 endpoint 的资源含 bucket', async () => {
+  const h = await fns.v2AuthHeaders({
+    method: 'GET', url: 'https://acc.r2.cloudflarestorage.com/mybk/swc-backup.json',
+    endpoint: 'https://acc.r2.cloudflarestorage.com/mybk',
+    contentType: '', accessKey: 'AK', secretKey: 'SK', amzDate: '20261004T000000Z'
+  });
+  const sts = 'GET\n\n\n\nx-amz-date:20261004T000000Z\n/mybk/swc-backup.json';
+  const expected = createHmac('sha1', 'SK').update(sts).digest('base64');
+  assert.equal(h.Authorization, 'AWS AK:' + expected);
 });
 
 await Promise.all(pending);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.3
+// @version      0.3.4
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @match        *://*/*
@@ -294,11 +294,39 @@
 
   // 阿里 OSS 的 V4 签名要求 scope 里 service=oss、region=oss-cn-xxx（与 endpoint 一致）；
   // 其余 S3 兼容服务用标准 s3
+  function isOssHost(hostname) {
+    return /(^|\.)(oss-[a-z0-9-]+|oss-accelerate)\.aliyuncs\.com$/.test(hostname || '');
+  }
+
   function s3RegionService(hostname, regionRaw) {
-    const isOss = /(^|\.)oss-[a-z0-9-]+\.aliyuncs\.com$/.test(hostname || '');
+    const isOss = isOssHost(hostname);
     let region = String(regionRaw || '').trim() || 'us-east-1';
     if (isOss && /^cn-[a-z0-9-]+$/.test(region)) region = 'oss-' + region;
     return { region, service: isOss ? 'oss' : 's3' };
+  }
+
+  // ---- AWS V2 签名（OSS S3 兼容的主要签名方式） ----
+  async function hmacSha1B64(keyStr, msg) {
+    const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(keyStr), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+    const sig = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(msg));
+    let bin = '';
+    new Uint8Array(sig).forEach((b) => { bin += String.fromCharCode(b); });
+    return btoa(bin);
+  }
+
+  function v2StringToSign(method, contentType, amzDate, canonicalResource) {
+    // x-amz-date 存在时 Date 段留空（浏览器侧无法设置 Date 头）
+    return method + '\n' + '\n' + (contentType || '') + '\n' + '\n' +
+      'x-amz-date:' + amzDate + '\n' + canonicalResource;
+  }
+
+  async function v2AuthHeaders(opts) {
+    const u = new URL(opts.url);
+    const pe = parseS3Endpoint(opts.endpoint);
+    const resource = pe.pathStyle ? u.pathname : '/' + pe.bucket + u.pathname;
+    const sts = v2StringToSign(opts.method, opts.contentType, opts.amzDate, resource);
+    const sig = await hmacSha1B64(opts.secretKey, sts);
+    return { Authorization: 'AWS ' + opts.accessKey + ':' + sig, 'x-amz-date': opts.amzDate };
   }
 
   // AWS SigV4；s3Compat=true 时附加 x-amz-content-sha256（S3/OSS/R2 需要）
@@ -913,17 +941,26 @@
       if (r.status >= 300) throw new Error('WebDAV PUT HTTP ' + r.status + '（检查目录地址/账号/应用密码）');
       return;
     }
-    // S3 兼容（阿里OSS/腾讯COS/R2/MinIO/AWS）
+    // S3 兼容：阿里 OSS 走 V2 签名（其 V4 兼容存在差异），其余用标准 V4
     const base = settings.s3Endpoint.replace(/\/+$/, '');
     const url = base + '/' + encodeURIComponent(settings.s3Path || BACKUP_FILE);
-    const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
-    const headers = await sigv4Headers({
-      method: 'PUT', url, body: text,
-      accessKey: settings.s3Key, secretKey: settings.s3Secret,
-      region: rs.region, service: rs.service,
-      amzDate: amzDateNow(), s3Compat: true
-    });
-    headers['Content-Type'] = 'application/json';
+    let headers;
+    if (isOssHost(new URL(url).hostname)) {
+      headers = await v2AuthHeaders({
+        method: 'PUT', url, endpoint: settings.s3Endpoint, contentType: 'application/json',
+        accessKey: settings.s3Key, secretKey: settings.s3Secret, amzDate: amzDateNow()
+      });
+      headers['Content-Type'] = 'application/json';
+    } else {
+      const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
+      headers = await sigv4Headers({
+        method: 'PUT', url, body: text,
+        accessKey: settings.s3Key, secretKey: settings.s3Secret,
+        region: rs.region, service: rs.service,
+        amzDate: amzDateNow(), s3Compat: true
+      });
+      headers['Content-Type'] = 'application/json';
+    }
     const r = await gmReq({ method: 'PUT', url, headers, data: text });
     if (r.status >= 300) throw new Error('S3 PUT HTTP ' + r.status + ' ' + xmlErr(r.responseText));
   }
@@ -939,13 +976,21 @@
     }
     const base = settings.s3Endpoint.replace(/\/+$/, '');
     const url = base + '/' + encodeURIComponent(settings.s3Path || BACKUP_FILE);
-    const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
-    const headers = await sigv4Headers({
-      method: 'GET', url, body: '',
-      accessKey: settings.s3Key, secretKey: settings.s3Secret,
-      region: rs.region, service: rs.service,
-      amzDate: amzDateNow(), s3Compat: true
-    });
+    let headers;
+    if (isOssHost(new URL(url).hostname)) {
+      headers = await v2AuthHeaders({
+        method: 'GET', url, endpoint: settings.s3Endpoint, contentType: '',
+        accessKey: settings.s3Key, secretKey: settings.s3Secret, amzDate: amzDateNow()
+      });
+    } else {
+      const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
+      headers = await sigv4Headers({
+        method: 'GET', url, body: '',
+        accessKey: settings.s3Key, secretKey: settings.s3Secret,
+        region: rs.region, service: rs.service,
+        amzDate: amzDateNow(), s3Compat: true
+      });
+    }
     const r = await gmReq({ method: 'GET', url, headers });
     if (r.status === 404) return null;
     if (r.status >= 300) throw new Error('S3 GET HTTP ' + r.status + ' ' + xmlErr(r.responseText));
