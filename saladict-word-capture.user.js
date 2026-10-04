@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.5
+// @version      0.3.6
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @match        *://*/*
@@ -305,7 +305,7 @@
     return { region, service: isOss ? 'oss' : 's3' };
   }
 
-  // ---- AWS V2 签名（OSS S3 兼容的主要签名方式） ----
+  // ---- AWS V2 签名（OSS S3 兼容主用） ----
   async function hmacSha1B64(keyStr, msg) {
     const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(keyStr), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
     const sig = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(msg));
@@ -314,19 +314,17 @@
     return btoa(bin);
   }
 
-  function v2StringToSign(method, contentType, amzDate, canonicalResource) {
-    // x-amz-date 存在时 Date 段留空（浏览器侧无法设置 Date 头）
-    return method + '\n' + '\n' + (contentType || '') + '\n' + '\n' +
-      'x-amz-date:' + amzDate + '\n' + canonicalResource;
-  }
-
-  async function v2AuthHeaders(opts) {
+  // 预签名 URL（query 签名）：签名串不含任何请求头，绕开浏览器无法设置 Date 头的限制
+  async function ossPresignV2(opts) {
     const u = new URL(opts.url);
     const pe = parseS3Endpoint(opts.endpoint);
     const resource = pe.pathStyle ? u.pathname : '/' + pe.bucket + u.pathname;
-    const sts = v2StringToSign(opts.method, opts.contentType, opts.amzDate, resource);
+    const sts = opts.method + '\n' + '\n' + (opts.contentType || '') + '\n' + opts.expires + '\n' + resource;
     const sig = await hmacSha1B64(opts.secretKey, sts);
-    return { Authorization: 'AWS ' + opts.accessKey + ':' + sig, 'x-amz-date': opts.amzDate };
+    return u.origin + u.pathname +
+      '?OSSAccessKeyId=' + encodeURIComponent(opts.accessKey) +
+      '&Expires=' + opts.expires +
+      '&Signature=' + encodeURIComponent(sig);
   }
 
   // AWS SigV4；s3Compat=true 时附加 x-amz-content-sha256（S3/OSS/R2 需要）
@@ -353,11 +351,15 @@
     return headers;
   }
 
-  // 从 S3/W3C 错误 XML 里提取 Code 和 Message，便于 toast 展示
+  // 从 S3/W3C 错误 XML 里提取 Code/Message/StringToSign
   function xmlErr(text) {
     const c = /<Code>([^<]+)<\/Code>/.exec(text || '');
     const m = /<Message>([^<]+)<\/Message>/.exec(text || '');
-    return c ? c[1] + (m ? ': ' + m[1].trim().slice(0, 900) : '') : String(text || '').slice(0, 300);
+    const s = /<StringToSign>([\s\S]*?)<\/StringToSign>/.exec(text || '');
+    let out = c ? c[1] : String(text || '').slice(0, 200);
+    if (m) out += ': ' + m[1].trim().slice(0, 200);
+    if (s) out += ' | StringToSign=' + JSON.stringify(s[1]);
+    return out;
   }
 
   function buildBackupDump(knownArr, savedArr, personalArr, queueArr, settings) {
@@ -941,16 +943,17 @@
       if (r.status >= 300) throw new Error('WebDAV PUT HTTP ' + r.status + '（检查目录地址/账号/应用密码）');
       return;
     }
-    // S3 兼容：阿里 OSS 走 V2 签名（其 V4 兼容存在差异），其余用标准 V4
+    // S3 兼容：阿里 OSS 走 V2 预签名 URL（绕开 Date 头限制），其余用标准 V4
     const base = settings.s3Endpoint.replace(/\/+$/, '');
     const url = base + '/' + encodeURIComponent(settings.s3Path || BACKUP_FILE);
-    let headers;
+    let headers, putUrl = url;
     if (isOssHost(new URL(url).hostname)) {
-      headers = await v2AuthHeaders({
+      putUrl = await ossPresignV2({
         method: 'PUT', url, endpoint: settings.s3Endpoint, contentType: 'application/json',
-        accessKey: settings.s3Key, secretKey: settings.s3Secret, amzDate: amzDateNow()
+        expires: Math.floor(Date.now() / 1000) + 300,
+        accessKey: settings.s3Key, secretKey: settings.s3Secret
       });
-      headers['Content-Type'] = 'application/json';
+      headers = { 'Content-Type': 'application/json' };
     } else {
       const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
       headers = await sigv4Headers({
@@ -961,7 +964,7 @@
       });
       headers['Content-Type'] = 'application/json';
     }
-    const r = await gmReq({ method: 'PUT', url, headers, data: text });
+    const r = await gmReq({ method: 'PUT', url: putUrl, headers, data: text });
     if (r.status >= 300) {
       console.warn('[SWC] S3 PUT 完整错误响应：', r.responseText);
       throw new Error('S3 PUT HTTP ' + r.status + ' ' + xmlErr(r.responseText));
@@ -979,12 +982,14 @@
     }
     const base = settings.s3Endpoint.replace(/\/+$/, '');
     const url = base + '/' + encodeURIComponent(settings.s3Path || BACKUP_FILE);
-    let headers;
+    let headers, getUrl = url;
     if (isOssHost(new URL(url).hostname)) {
-      headers = await v2AuthHeaders({
+      getUrl = await ossPresignV2({
         method: 'GET', url, endpoint: settings.s3Endpoint, contentType: '',
-        accessKey: settings.s3Key, secretKey: settings.s3Secret, amzDate: amzDateNow()
+        expires: Math.floor(Date.now() / 1000) + 300,
+        accessKey: settings.s3Key, secretKey: settings.s3Secret
       });
+      headers = {};
     } else {
       const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
       headers = await sigv4Headers({
@@ -994,9 +999,12 @@
         amzDate: amzDateNow(), s3Compat: true
       });
     }
-    const r = await gmReq({ method: 'GET', url, headers });
+    const r = await gmReq({ method: 'GET', url: getUrl, headers });
     if (r.status === 404) return null;
-    if (r.status >= 300) throw new Error('S3 GET HTTP ' + r.status + ' ' + xmlErr(r.responseText));
+    if (r.status >= 300) {
+      console.warn('[SWC] S3 GET 完整错误响应：', r.responseText);
+      throw new Error('S3 GET HTTP ' + r.status + ' ' + xmlErr(r.responseText));
+    }
     return r.responseText;
   }
 
