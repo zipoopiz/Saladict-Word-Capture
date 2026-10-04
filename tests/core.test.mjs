@@ -10,7 +10,7 @@ const core = src.split('//<<CORE')[1].split('//CORE>>')[0];
 const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
   clozeify, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
-  sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, buildBackupDump, mergeBackup };`)();
+  sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup };`)();
 
 let passed = 0;
 const pending = [];
@@ -240,6 +240,18 @@ t('mergeBackup: 并集合并+队列去重', () => {
   assert.deepEqual(r.saved, ['s']);
   assert.equal(r.queue.length, 2);
   assert.deepEqual(r.counts, { known: 2, saved: 1, personal: 0, queueAdded: 1 });
+});
+t('s3RegionService: 阿里OSS 用 service=oss 且 region 自动补 oss- 前缀', () => {
+  assert.deepEqual(fns.s3RegionService('mybk.oss-cn-hangzhou.aliyuncs.com', 'cn-hangzhou'),
+    { region: 'oss-cn-hangzhou', service: 'oss' });
+  assert.deepEqual(fns.s3RegionService('mybk.oss-cn-hangzhou.aliyuncs.com', 'oss-cn-hangzhou'),
+    { region: 'oss-cn-hangzhou', service: 'oss' });
+});
+t('s3RegionService: 非 OSS 服务保持标准 s3', () => {
+  assert.deepEqual(fns.s3RegionService('acc.r2.cloudflarestorage.com', 'auto'),
+    { region: 'auto', service: 's3' });
+  assert.deepEqual(fns.s3RegionService('s3.amazonaws.com', ''),
+    { region: 'us-east-1', service: 's3' });
 });
 
 await Promise.all(pending);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.1
+// @version      0.3.2
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @match        *://*/*
@@ -290,6 +290,15 @@
     const path = u.pathname.replace(/\/+$/, '');
     if (path) return { host: u.hostname, bucket: path.slice(1), pathStyle: true };
     return { host: u.hostname, bucket: u.hostname.split('.')[0], pathStyle: false };
+  }
+
+  // 阿里 OSS 的 V4 签名要求 scope 里 service=oss、region=oss-cn-xxx（与 endpoint 一致）；
+  // 其余 S3 兼容服务用标准 s3
+  function s3RegionService(hostname, regionRaw) {
+    const isOss = /(^|\.)oss-[a-z0-9-]+\.aliyuncs\.com$/.test(hostname || '');
+    let region = String(regionRaw || '').trim() || 'us-east-1';
+    if (isOss && /^cn-[a-z0-9-]+$/.test(region)) region = 'oss-' + region;
+    return { region, service: isOss ? 'oss' : 's3' };
   }
 
   // AWS SigV4；s3Compat=true 时附加 x-amz-content-sha256（S3/OSS/R2 需要）
@@ -900,15 +909,16 @@
     // S3 兼容（阿里OSS/腾讯COS/R2/MinIO/AWS）
     const base = settings.s3Endpoint.replace(/\/+$/, '');
     const url = base + '/' + encodeURIComponent(settings.s3Path || BACKUP_FILE);
+    const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
     const headers = await sigv4Headers({
       method: 'PUT', url, body: text,
       accessKey: settings.s3Key, secretKey: settings.s3Secret,
-      region: settings.s3Region || 'us-east-1', service: 's3',
+      region: rs.region, service: rs.service,
       amzDate: amzDateNow(), s3Compat: true
     });
     headers['Content-Type'] = 'application/json';
     const r = await gmReq({ method: 'PUT', url, headers, data: text });
-    if (r.status >= 300) throw new Error('S3 PUT HTTP ' + r.status + ' ' + String(r.responseText || '').slice(0, 200));
+    if (r.status >= 300) throw new Error('S3 PUT HTTP ' + r.status + ' ' + xmlErr(r.responseText));
   }
 
   async function cloudGet() {
@@ -922,15 +932,16 @@
     }
     const base = settings.s3Endpoint.replace(/\/+$/, '');
     const url = base + '/' + encodeURIComponent(settings.s3Path || BACKUP_FILE);
+    const rs = s3RegionService(new URL(url).hostname, settings.s3Region);
     const headers = await sigv4Headers({
       method: 'GET', url, body: '',
       accessKey: settings.s3Key, secretKey: settings.s3Secret,
-      region: settings.s3Region || 'us-east-1', service: 's3',
+      region: rs.region, service: rs.service,
       amzDate: amzDateNow(), s3Compat: true
     });
     const r = await gmReq({ method: 'GET', url, headers });
     if (r.status === 404) return null;
-    if (r.status >= 300) throw new Error('S3 GET HTTP ' + r.status);
+    if (r.status >= 300) throw new Error('S3 GET HTTP ' + r.status + ' ' + xmlErr(r.responseText));
     return r.responseText;
   }
 
@@ -1057,11 +1068,11 @@
       settings.cloudType = cloudSel.value;
       settings.davUrl = dlg.querySelector('#swc-f-davurl').value.trim();
       settings.davUser = dlg.querySelector('#swc-f-davuser').value.trim();
-      settings.davPass = dlg.querySelector('#swc-f-davpass').value;
+      settings.davPass = dlg.querySelector('#swc-f-davpass').value.trim();
       settings.s3Endpoint = normalizeS3Endpoint(dlg.querySelector('#swc-f-s3ep').value.trim());
       settings.s3Region = dlg.querySelector('#swc-f-s3region').value.trim();
       settings.s3Key = dlg.querySelector('#swc-f-s3key').value.trim();
-      settings.s3Secret = dlg.querySelector('#swc-f-s3secret').value;
+      settings.s3Secret = dlg.querySelector('#swc-f-s3secret').value.trim();
       settings.s3Path = dlg.querySelector('#swc-f-s3path').value.trim() || 'swc-backup.json';
       settings.autoBackup = dlg.querySelector('#swc-f-autob').checked;
       settings.llmBase = dlg.querySelector('#swc-f-llmbase').value.trim();
