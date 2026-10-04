@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.4
+// @version      0.3.5
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @match        *://*/*
@@ -357,7 +357,7 @@
   function xmlErr(text) {
     const c = /<Code>([^<]+)<\/Code>/.exec(text || '');
     const m = /<Message>([^<]+)<\/Message>/.exec(text || '');
-    return c ? c[1] + (m ? ': ' + m[1].trim().slice(0, 120) : '') : String(text || '').slice(0, 150);
+    return c ? c[1] + (m ? ': ' + m[1].trim().slice(0, 900) : '') : String(text || '').slice(0, 300);
   }
 
   function buildBackupDump(knownArr, savedArr, personalArr, queueArr, settings) {
@@ -962,7 +962,10 @@
       headers['Content-Type'] = 'application/json';
     }
     const r = await gmReq({ method: 'PUT', url, headers, data: text });
-    if (r.status >= 300) throw new Error('S3 PUT HTTP ' + r.status + ' ' + xmlErr(r.responseText));
+    if (r.status >= 300) {
+      console.warn('[SWC] S3 PUT 完整错误响应：', r.responseText);
+      throw new Error('S3 PUT HTTP ' + r.status + ' ' + xmlErr(r.responseText));
+    }
   }
 
   async function cloudGet() {
