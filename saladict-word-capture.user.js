@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.0
+// @version      0.3.1
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @match        *://*/*
@@ -853,6 +853,20 @@
 
   const BACKUP_FILE = 'swc-backup.json';
 
+  // 阿里 OSS 禁止路径式访问（报 SecondLevelDomainForbidden），保存时自动转虚拟主机式
+  function normalizeS3Endpoint(ep) {
+    if (!ep) return ep;
+    let s = ep.replace(/\/+$/, '');
+    try {
+      const u = new URL(s);
+      if (/(^|\.)oss-[a-z0-9-]+\.aliyuncs\.com$/.test(u.hostname) && u.pathname.replace(/\/+$/, '')) {
+        s = u.protocol + '//' + u.pathname.replace(/^\/|\/+$/g, '') + '.' + u.hostname;
+        toast('OSS Endpoint 已自动转换为虚拟主机式（bucket 作子域名）', 4000);
+      }
+    } catch (e) { /* 非法 URL 交给后续校验 */ }
+    return s;
+  }
+
   function utf8B64(str) {
     return btoa(String.fromCharCode(...new TextEncoder().encode(str)));
   }
@@ -894,7 +908,7 @@
     });
     headers['Content-Type'] = 'application/json';
     const r = await gmReq({ method: 'PUT', url, headers, data: text });
-    if (r.status >= 300) throw new Error('S3 PUT HTTP ' + r.status + ' ' + String(r.responseText || '').slice(0, 100));
+    if (r.status >= 300) throw new Error('S3 PUT HTTP ' + r.status + ' ' + String(r.responseText || '').slice(0, 200));
   }
 
   async function cloudGet() {
@@ -1044,7 +1058,7 @@
       settings.davUrl = dlg.querySelector('#swc-f-davurl').value.trim();
       settings.davUser = dlg.querySelector('#swc-f-davuser').value.trim();
       settings.davPass = dlg.querySelector('#swc-f-davpass').value;
-      settings.s3Endpoint = dlg.querySelector('#swc-f-s3ep').value.trim();
+      settings.s3Endpoint = normalizeS3Endpoint(dlg.querySelector('#swc-f-s3ep').value.trim());
       settings.s3Region = dlg.querySelector('#swc-f-s3region').value.trim();
       settings.s3Key = dlg.querySelector('#swc-f-s3key').value.trim();
       settings.s3Secret = dlg.querySelector('#swc-f-s3secret').value;
