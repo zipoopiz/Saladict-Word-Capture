@@ -11,7 +11,7 @@ const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
   clozeify, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
   sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr,
-  ossPresignV2, isOssHost };`)();
+  ossPresignV2, isOssHost, bytesToB64 };`)();
 
 let passed = 0;
 const pending = [];
@@ -301,6 +301,12 @@ t('xmlErr: 提取兄弟元素里的 StringToSign', () => {
   const xml = '<Error><Code>SignatureDoesNotMatch</Code><Message>does not match</Message>' +
     '<StringToSign>PUT\n\napplication/json\n123\n/mybk/x.json</StringToSign></Error>';
   assert.ok(fns.xmlErr(xml).includes('StringToSign="PUT\\n\\napplication/json\\n123\\n/mybk/x.json"'));
+});
+t('bytesToB64: 分块转换与 Buffer 一致', () => {
+  const small = new Uint8Array([0, 1, 2, 254, 255]);
+  assert.equal(fns.bytesToB64(small), Buffer.from(small).toString('base64'));
+  const big = new Uint8Array(200000).map((_, i) => i % 256);
+  assert.equal(fns.bytesToB64(big), Buffer.from(big).toString('base64'));
 });
 
 await Promise.all(pending);

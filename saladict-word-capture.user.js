@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.6
+// @version      0.3.7
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @match        *://*/*
@@ -237,6 +237,13 @@
     return 'SW_' + String(word).toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 60) + '.mp3';
   }
 
+  function bytesToB64(u8) {
+    let bin = '';
+    const CH = 0x8000;
+    for (let i = 0; i < u8.length; i += CH) bin += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+    return btoa(bin);
+  }
+
   function hashStr(s) {
     let h = 5381;
     for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
@@ -394,7 +401,7 @@
 
   // ===================== GM 工具 =====================
 
-  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue' };
+  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue', audioRetry: 'swc_audio_retry' };
 
   const DEFAULT_SETTINGS = {
     inited: false,
@@ -418,6 +425,7 @@
   let savedSet = new Set(gmGet(GMK.saved, []));
   let personalUnkSet = new Set(gmGet(GMK.personal, []));
   let queue = gmGet(GMK.queue, []);
+  let audioRetryList = gmGet(GMK.audioRetry, []);
 
   function gmGet(key, dflt) {
     try { const v = GM_getValue(key); return v === undefined || v === null ? dflt : JSON.parse(v); }
@@ -429,6 +437,7 @@
   function saveSaved() { gmSet(GMK.saved, [...savedSet]); }
   function savePersonal() { gmSet(GMK.personal, [...personalUnkSet]); }
   function saveQueue() { gmSet(GMK.queue, queue); }
+  function saveAudioRetry() { gmSet(GMK.audioRetry, audioRetryList); }
 
   function gmReq(opts) {
     return new Promise((resolve, reject) => {
@@ -454,6 +463,35 @@
     const r = await gmJSON('POST', settings.ankiUrl, JSON.stringify({ action, version: 6, params: params || {} }));
     if (r.error) throw new Error('AnkiConnect: ' + r.error);
     return r.result;
+  }
+
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+  function gmReqBinary(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET', url, responseType: 'arraybuffer', timeout: 20000,
+        onload: (r) => (r.status === 200 && r.response && r.response.byteLength > 500)
+          ? resolve(new Uint8Array(r.response)) : reject(new Error('HTTP ' + r.status)),
+        onerror: () => reject(new Error('network error')),
+        ontimeout: () => reject(new Error('timeout'))
+      });
+    });
+  }
+
+  // 发音兜底下载：有道对大写开头词返回 500，统一转小写；美音失败转英音，各重试一次
+  async function fetchAudioB64(word) {
+    const w = String(word).toLowerCase();
+    const urls = [
+      'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(w) + '&type=2',
+      'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(w) + '&type=1'
+    ];
+    for (const u of urls) {
+      for (let a = 0; a < 2; a++) {
+        try { return bytesToB64(await gmReqBinary(u)); } catch (e) { await sleep(600); }
+      }
+    }
+    return null;
   }
 
   // ===================== 词典与 LLM =====================
@@ -834,6 +872,7 @@
     const btn = panelEl.querySelector('[data-swc-ingest]');
     prog.style.display = 'block'; btn.disabled = true; btn.style.opacity = '.6';
     const fail = [];
+    const audioFail = [];
     let ok = 0;
     try {
       await anki('version');
@@ -841,8 +880,9 @@
         const it = queue[i];
         prog.textContent = '入库中 ' + (i + 1) + '/' + queue.length + '：' + it.word;
         try {
-          await ingestOne(it);
+          const audioOk = await ingestOne(it);
           ok++;
+          if (!audioOk) audioFail.push(it.word);
           queue.splice(i, 1); i--;
           saveQueue(); refreshPanel(); updateBadge();
         } catch (err) {
@@ -855,10 +895,67 @@
     prog.style.display = 'none'; btn.disabled = false; btn.style.opacity = '';
     ingesting = false;
     if (ok && settings.autoBackup && settings.cloudType) backupToCloud(); // 入库成功后自动备份
-    const msg = ok ? '成功入库 ' + ok + ' 张卡' : '';
-    if (fail.length) toast(msg + '，失败 ' + fail.length + '：' + fail.slice(0, 2).join('；'), 6000);
-    else if (ok) toast(msg);
+    let msg = ok ? '成功入库 ' + ok + ' 张卡' : '';
+    if (audioFail.length) msg += '，发音待补 ' + audioFail.length + ' 个（菜单可补）';
+    if (fail.length) toast(msg ? msg + '；失败 ' + fail.length + '：' + fail.slice(0, 2).join('；') : '失败 ' + fail.length + '：' + fail.slice(0, 2).join('；'), 6000);
+    else if (ok) toast(msg, audioFail.length ? 5500 : 2600);
     if (ok) rescan();
+  }
+
+  async function noteIdsForWord(word) {
+    const q = 'note:"' + settings.modelName + '" Text:"' + String(word).replace(/"/g, '') + '"';
+    return anki('findNotes', { query: q });
+  }
+
+  // 建卡后确认发音文件真的就位；没就位则浏览器自行下载兜底，仍失败进待补清单
+  async function ensureAudio(it, filename) {
+    let ok = false;
+    try { ok = !!(await anki('retrieveMediaFile', { filename })); } catch (e) { /* 动作缺失时按未下载处理 */ }
+    if (!ok) {
+      try {
+        const b64 = await fetchAudioB64(it.word);
+        if (!b64) throw new Error('no audio source');
+        await anki('storeMediaFile', { filename, data: b64 });
+        ok = true;
+      } catch (e) { /* 落入待补清单 */ }
+    }
+    if (ok) {
+      // AnkiConnect 下载失败时会把错误文本写进 Audio 字段，这里确保是合法的 [sound:] 标签
+      try {
+        const ids = await noteIdsForWord(it.word);
+        if (ids.length) {
+          const info = (await anki('notesInfo', { notes: [ids[0]] }))[0];
+          const cur = (info && info.fields && info.fields.Audio && info.fields.Audio.value) || '';
+          if (!cur.includes('[sound:')) {
+            await anki('updateNoteFields', { note: { id: ids[0], fields: { Audio: '[sound:' + filename + ']' } } });
+          }
+        }
+      } catch (e) { /* 字段检查失败不影响结论 */ }
+    } else if (!audioRetryList.some((x) => x.word === it.word)) {
+      audioRetryList.push({ word: it.word, filename });
+      saveAudioRetry();
+    }
+    return ok;
+  }
+
+  async function repairAudio() {
+    if (!audioRetryList.length) { toast('没有待补的发音'); return; }
+    let ok = 0;
+    const still = [];
+    for (const it of audioRetryList) {
+      try {
+        const b64 = await fetchAudioB64(it.word);
+        if (!b64) { still.push(it.word); continue; }
+        await anki('storeMediaFile', { filename: it.filename, data: b64 });
+        const ids = await noteIdsForWord(it.word);
+        for (const id of ids) {
+          await anki('updateNoteFields', { note: { id, fields: { Audio: '[sound:' + it.filename + ']' } } });
+        }
+        ok++;
+      } catch (e) { still.push(it.word); }
+    }
+    audioRetryList = still; saveAudioRetry();
+    toast('补发音完成 ' + ok + ' 个' + (still.length ? '，仍失败：' + still.join('、') : ''), 4500);
   }
 
   async function ingestOne(it) {
@@ -883,7 +980,7 @@
       tags: [it.host || 'web', yyyymmdd(new Date(it.dateAdded)), 'web-reader'],
       options: { allowDuplicate: true },
       audio: [{
-        url: 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(it.word) + '&type=' + (settings.audioType || 2),
+        url: 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(String(it.word).toLowerCase()) + '&type=' + (settings.audioType || 2),
         filename: safeFilename(it.word),
         fields: ['Audio'],
         skipHash: true
@@ -891,8 +988,10 @@
     };
     const noteId = await anki('addNote', { note });
     if (!noteId && noteId !== 0) throw new Error('addNote 返回空');
+    const audioOk = await ensureAudio(it, safeFilename(it.word));
     genCandidates(it.word).forEach((c) => savedSet.add(c));
     saveSaved();
+    return audioOk;
   }
 
   // ===================== 云备份（WebDAV / S3 兼容） =====================
@@ -1228,6 +1327,7 @@
     GM_registerMenuCommand('导入词表', importKnown);
     GM_registerMenuCommand('备份词表到云', backupToCloud);
     GM_registerMenuCommand('从云恢复词表（合并）', restoreFromCloud);
+    GM_registerMenuCommand('补下载失败的发音', repairAudio);
     GM_registerMenuCommand('测试 AnkiConnect', testConnection);
   }
 
