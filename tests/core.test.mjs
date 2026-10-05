@@ -11,7 +11,7 @@ const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
   clozeify, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
   sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr,
-  ossPresignV2, isOssHost, bytesToB64 };`)();
+  ossPresignV2, isOssHost, bytesToB64, SWC_MODEL };`)();
 
 let passed = 0;
 const pending = [];
@@ -307,6 +307,22 @@ t('bytesToB64: 分块转换与 Buffer 一致', () => {
   assert.equal(fns.bytesToB64(small), Buffer.from(small).toString('base64'));
   const big = new Uint8Array(200000).map((_, i) => i % 256);
   assert.equal(fns.bytesToB64(big), Buffer.from(big).toString('base64'));
+});
+
+// ---- 内嵌模型定义（首次入库一键创建用） ----
+t('SWC_MODEL: 字段与 buildNoteFields 输出顺序一致', () => {
+  const f = fns.buildNoteFields({ word: 'x', dateAdded: 1 });
+  assert.deepEqual(fns.SWC_MODEL.fields, Object.keys(f));
+});
+t('SWC_MODEL: 背面模板自带发音行且无大括号笔误', () => {
+  assert.ok(fns.SWC_MODEL.back.startsWith('{{#Audio}}'));
+  assert.ok(fns.SWC_MODEL.back.includes('{{Audio}}'));
+  assert.ok(fns.SWC_MODEL.back.includes('{{type:cloze:ContextCloze}}'));
+  assert.ok(!fns.SWC_MODEL.back.includes('{{{{'));
+});
+t('SWC_MODEL: 正面是 cloze 模板', () => {
+  assert.ok(fns.SWC_MODEL.front.includes('{{cloze:ContextCloze}}'));
+  assert.ok(fns.SWC_MODEL.front.includes('{{type:cloze:ContextCloze}}'));
 });
 
 await Promise.all(pending);

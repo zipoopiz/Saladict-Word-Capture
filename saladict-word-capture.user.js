@@ -1,9 +1,12 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.7
+// @version      0.3.8
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
+// @license      MIT
+// @homepageURL  https://github.com/zipoopiz/Saladict-Word-Capture
+// @supportURL   https://github.com/zipoopiz/Saladict-Word-Capture/issues
 // @match        *://*/*
 // @exclude      *://127.0.0.1:8765/*
 // @exclude      *://localhost:8765/*
@@ -397,7 +400,16 @@
       }
     };
   }
-  //CORE>>
+    // 内嵌的 Saladict Word Cloze 完整模型定义（首次入库时一键创建；背面已含 {{Audio}} 发音行）
+  const SWC_MODEL = {
+    name: "Saladict Word Cloze",
+    fields: ["Date", "Text", "Translation", "Context", "ContextCloze", "Note", "Title", "Url", "Favicon", "Audio"],
+    css: ".card {\n  font-family: arial;\n  font-size: 20px;\n  text-align: center;\n  color: #333;\n  background-color: white;\n}\n\na {\n  color: #5caf9e;\n}\n\ninput {\n  border: 1px solid #eee;\n}\n\nsection {\n  margin: 1em 0;\n}\n\n.trans {\n  border: 1px solid #eee;\n  padding: 0.5em;\n}\n\n.trans_title {\n  display: block;\n  font-size: 0.9em;\n  font-weight: bold;\n}\n\n.trans_content {\n  margin-bottom: 0.5em;\n}\n\n.cloze {\n  font-weight: bold;\n  color: #f9690e;\n}\n\n.tsource {\n  position: relative;\n  font-size: .8em;\n}\n\n.tsource img {\n  height: .7em;\n}\n\n.tsource a {\n  text-decoration: none;\n}\n\n.typeGood {\n  color: #fff;\n  background: #1EBC61;\n}\n\n.typeBad {\n  color: #fff;\n  background: #F75C4C;\n}\n\n.typeMissed {\n  color: #fff;\n  background: #7C8A99;\n}\n",
+    front: "{{#ContextCloze}}\n<section>{{cloze:ContextCloze}}</section>\n<section>{{type:cloze:ContextCloze}}</section>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{^ContextCloze}}\n<h1>{{Text}}</h1>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{#Note}}\n<section>{{hint:Note}}</section>\n{{/Note}}\n\n{{#Title}}\n<section class=\"tsource\">\n<hr />\n{{#Favicon}}<img src=\"{{Favicon}}\" />{{/Favicon}}\n<a href=\"{{Url}}\">{{Title}}</a>\n</section>\n{{/Title}}\n",
+    back: "{{#Audio}}\n<section>{{Audio}}</section>\n{{/Audio}}\n\n{{#ContextCloze}}\n<section>{{cloze:ContextCloze}}</section>\n<section>{{type:cloze:ContextCloze}}</section>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{^ContextCloze}}\n<h1>{{Text}}</h1>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{#Note}}\n<section>{{Note}}</section>\n{{/Note}}\n\n{{#Title}}\n<section class=\"tsource\">\n<hr />\n{{#Favicon}}<img src=\"{{Favicon}}\" />{{/Favicon}}\n<a href=\"{{Url}}\">{{Title}}</a>\n</section>\n{{/Title}}\n"
+  };
+
+//CORE>>
 
   // ===================== GM 工具 =====================
 
@@ -864,6 +876,37 @@
     };
   }
 
+  // 首次入库引导：检测并一键创建缺失的笔记模型/牌组
+  async function ensureAnkiSetup() {
+    const models = await anki('modelNames');
+    const decks = await anki('deckNames');
+    const needModel = !models.includes(settings.modelName);
+    const needDeck = !decks.includes(settings.deckName);
+    if (!needModel && !needDeck) return true;
+    if (needModel && settings.modelName !== SWC_MODEL.name) {
+      throw new Error('笔记模型「' + settings.modelName + '」不存在且不是内置模板名，请在设置里改回「' + SWC_MODEL.name + '」或自行创建该模型');
+    }
+    const missing = [
+      needModel ? '笔记模型「' + settings.modelName + '」' : '',
+      needDeck ? '牌组「' + settings.deckName + '」' : ''
+    ].filter(Boolean).join(' 和 ');
+    if (!confirm('SWC 检测到你的 Anki 还没有 ' + missing + '。\n\n是否一键创建？（卡片模板内嵌在脚本中：Saladict Word 同款 cloze 卡，背面自带发音字段）')) {
+      throw new Error('已取消创建所需的模型/牌组');
+    }
+    if (needModel) {
+      await anki('createModel', {
+        modelName: SWC_MODEL.name,
+        inOrderFields: SWC_MODEL.fields,
+        css: SWC_MODEL.css,
+        isCloze: true,
+        cardTemplates: [{ Name: 'Saladict Cloze', Front: SWC_MODEL.front, Back: SWC_MODEL.back }]
+      });
+    }
+    if (needDeck) await anki('createDeck', { deck: settings.deckName });
+    toast('Anki 初始化完成，继续入库');
+    return true;
+  }
+
   async function ingestAll() {
     if (ingesting) return;
     if (!queue.length) { toast('队列为空'); return; }
@@ -876,6 +919,7 @@
     let ok = 0;
     try {
       await anki('version');
+      await ensureAnkiSetup();
       for (let i = 0; i < queue.length; i++) {
         const it = queue[i];
         prog.textContent = '入库中 ' + (i + 1) + '/' + queue.length + '：' + it.word;
@@ -890,7 +934,9 @@
         }
       }
     } catch (err) {
-      toast('连不上 AnkiConnect：' + err.message + '（Anki 是否开着？）', 4000);
+      const m = String(err.message || err);
+      const prefix = /timeout|network error|HTTP \d/.test(m) ? '连不上 AnkiConnect：' : '无法入库：';
+      toast(prefix + m, 5000);
     }
     prog.style.display = 'none'; btn.disabled = false; btn.style.opacity = '';
     ingesting = false;
@@ -1328,6 +1374,9 @@
     GM_registerMenuCommand('备份词表到云', backupToCloud);
     GM_registerMenuCommand('从云恢复词表（合并）', restoreFromCloud);
     GM_registerMenuCommand('补下载失败的发音', repairAudio);
+    GM_registerMenuCommand('初始化 Anki 模型/牌组', async () => {
+      try { await ensureAnkiSetup(); } catch (e) { toast(String(e.message || e), 4500); }
+    });
     GM_registerMenuCommand('测试 AnkiConnect', testConnection);
   }
 
