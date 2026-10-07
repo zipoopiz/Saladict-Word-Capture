@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.8
+// @version      0.3.9
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -198,20 +198,10 @@
     return { word, sentence: sent, occurrence: occ };
   }
 
-  function clozeify(sentence, surface, occurrence) {
-    const esc = surface.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp('\\b' + esc + '\\b', 'gi');
-    const hits = [];
-    let m;
-    while ((m = re.exec(sentence)) !== null) {
-      hits.push(m);
-      re.lastIndex = m.index + 1;
-    }
-    const target = hits.length ? hits[Math.min(occurrence, hits.length - 1)]
-      : (new RegExp(esc, 'i').exec(sentence));
-    if (!target) return sentence;
-    return sentence.slice(0, target.index) + '{{c1::' + target[0] + '}}' +
-      sentence.slice(target.index + target[0].length);
+  // 同句多处出现的同词全部挖空（同一 c1，翻面一起显示），避免未挖空的重复词泄露答案
+  function clozeify(sentence, surface) {
+    const esc = String(surface).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return String(sentence).replace(new RegExp('\\b' + esc + '\\b', 'gi'), (m) => '{{c1::' + m + '}}');
   }
 
   function parseYoudaoEc(data) {
@@ -688,7 +678,7 @@
     const st = classifyToken(info.word, knownSet, savedSet, freqSet, personalUnkSet);
     const isSaved = st === 'saved';
     const isKnownWord = st === 'known';
-    const cloze = clozeify(info.sentence, info.word, info.occurrence);
+    const cloze = clozeify(info.sentence, info.word);
     const preview = esc(cloze).replace(/\{\{c1::(.*?)\}\}/g, '<mark>$1</mark>');
 
     const el = document.createElement('div');
@@ -867,7 +857,7 @@
       const v = ta.value.trim();
       if (v && v !== it.sentence) {
         it.sentence = v;
-        it.cloze = clozeify(v, it.word, 0);
+        it.cloze = clozeify(v, it.word);
         const present = new RegExp(it.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(v);
         saveQueue();
         toast(present ? '上下文已更新' : '上下文已更新（注意：新句子里没有该词，未生成挖空）', 3500);

@@ -116,25 +116,32 @@ t('extract: 命中第二句且 occurrence=1', () => {
   assert.ok(r.sentence.endsWith('dinner.'));
   assert.equal(r.occurrence, 1);
 });
-t('clozeify: 挖指定第几次出现', () => {
+t('clozeify: 同句多个同词全部挖空（同一 c1）', () => {
   const r = fns.extractSentenceAt(novel, novel.indexOf('ran back'));
-  const c = fns.clozeify(r.sentence, r.word, r.occurrence);
-  assert.ok(c.includes('{{c1::ran}} back home'));
-  assert.ok(c.includes('ran quickly')); // 第一次出现保持原样
+  const c = fns.clozeify(r.sentence, r.word);
+  assert.ok(c.includes('{{c1::ran}} quickly'));
+  assert.ok(c.includes('{{c1::ran}} back'));
+  assert.equal(c.match(/\{\{c1::/g).length, 2);
 });
 t('clozeify: 基本形态', () => {
-  assert.equal(fns.clozeify('The cat sat.', 'cat', 0), 'The {{c1::cat}} sat.');
+  assert.equal(fns.clozeify('The cat sat.', 'cat'), 'The {{c1::cat}} sat.');
 });
 t('clozeify: 保留原大小写', () => {
-  const c = fns.clozeify('Tom Ran fast.', 'ran', 0);
+  const c = fns.clozeify('Tom Ran fast.', 'ran');
   assert.equal(c, 'Tom {{c1::Ran}} fast.');
+});
+t('clozeify: 不同词形不误挖', () => {
+  assert.equal(fns.clozeify('He runs daily.', 'ran'), 'He runs daily.');
+});
+t('clozeify: 词尾标点不干扰', () => {
+  assert.equal(fns.clozeify('He ran, and ran.', 'ran'), 'He {{c1::ran}}, and {{c1::ran}}.');
 });
 t('extract: 超长句子截断后仍含词且长度受限', () => {
   const long = 'A'.repeat(400) + ' hallucination ' + 'B'.repeat(400) + '. End.';
   const r = fns.extractSentenceAt(long, long.indexOf('hallucination'));
   assert.ok(r.sentence.length <= 330);
   assert.ok(r.sentence.includes('hallucination'));
-  assert.ok(fns.clozeify(r.sentence, r.word, r.occurrence).includes('{{c1::hallucination}}'));
+  assert.ok(fns.clozeify(r.sentence, r.word).includes('{{c1::hallucination}}'));
 });
 
 // ---- 词典解析（真实响应夹具） ----
