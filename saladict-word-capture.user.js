@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.4.0
+// @version      0.4.1
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -933,7 +933,7 @@
     prog.style.display = 'block'; btn.disabled = true; btn.style.opacity = '.6';
     const fail = [];
     const audioFail = [];
-    let ok = 0;
+    let ok = 0, dupSkip = 0;
     try {
       await anki('version');
       await ensureAnkiSetup();
@@ -943,9 +943,10 @@
         if (!loadQueue().some((x) => x.id === it.id)) continue; // 已在其他标签页处理
         prog.textContent = '入库中 ' + (n + 1) + '/' + items.length + '：' + it.word;
         try {
-          const audioOk = await ingestOne(it);
+          const r = await ingestOne(it);
           ok++;
-          if (!audioOk) audioFail.push(it.word);
+          if (r === 'already') dupSkip++;
+          else if (!r) audioFail.push(it.word);
           ingestedIds.add(it.id); saveIngested();
           removeQueueItem(it.id);
           refreshPanel(); updateBadge();
@@ -961,7 +962,8 @@
     prog.style.display = 'none'; btn.disabled = false; btn.style.opacity = '';
     ingesting = false;
     if (ok && settings.autoBackup && settings.cloudType) backupToCloud(); // 入库成功后自动备份
-    let msg = ok ? '成功入库 ' + ok + ' 张卡' : '';
+    let msg = ok ? '入库完成：新建 ' + (ok - dupSkip) + ' 张' : '';
+    if (dupSkip) msg += (msg ? '，' : '') + '跳过已存在 ' + dupSkip + ' 个';
     if (audioFail.length) msg += '，发音待补 ' + audioFail.length + ' 个（菜单可补）';
     if (fail.length) toast(msg ? msg + '；失败 ' + fail.length + '：' + fail.slice(0, 2).join('；') : '失败 ' + fail.length + '：' + fail.slice(0, 2).join('；'), 6000);
     else if (ok) toast(msg, audioFail.length ? 5500 : 2600);
@@ -1025,6 +1027,24 @@
   }
 
   async function ingestOne(it) {
+    // Anki 侧幂等：同词同句已建过卡则跳过（历史复活队列项 / 重复点击的最终防线）
+    const ctxNorm = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+    try {
+      const existIds = await noteIdsForWord(it.word);
+      if (existIds.length) {
+        const infos = await anki('notesInfo', { notes: existIds });
+        const dup = infos.some((nfo) => {
+          const cx = nfo.fields && nfo.fields.Context && nfo.fields.Context.value;
+          const cc = nfo.fields && nfo.fields.ContextCloze && nfo.fields.ContextCloze.value;
+          return ctxNorm(cx) === ctxNorm(it.sentence) || (it.cloze && ctxNorm(cc) === ctxNorm(it.cloze));
+        });
+        if (dup) {
+          genCandidates(it.word).forEach((c) => savedSet.add(c));
+          saveSaved();
+          return 'already';
+        }
+      }
+    } catch (e) { /* 查询失败不阻塞正常入库 */ }
     if (!it.glosses || !it.glosses.length) {
       const d = await fetchGlosses(it.word);
       it.glosses = d.glosses;
