@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.3.9
+// @version      0.4.0
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -373,14 +373,15 @@
   }
 
   // 合并语义：词表取并集，队列按 id 去重追加，不触碰本机设置
-  function mergeBackup(local, remote) {
+  function mergeBackup(local, remote, ingestedIds) {
     const mk = new Set(local.known), ms = new Set(local.saved), mp = new Set(local.personal);
     const r = remote || {};
     (r.known || []).forEach((w) => mk.add(w));
     (r.saved || []).forEach((w) => ms.add(w));
     (r.personalUnknown || []).forEach((w) => mp.add(w));
     const ids = new Set(local.queue.map((q) => q.id));
-    const addedQueue = (r.queue || []).filter((q) => q && q.id && !ids.has(q.id));
+    const ing = new Set(ingestedIds || []);
+    const addedQueue = (r.queue || []).filter((q) => q && q.id && !ids.has(q.id) && !ing.has(q.id));
     return {
       known: [...mk], saved: [...ms], personal: [...mp],
       queue: local.queue.concat(addedQueue),
@@ -403,7 +404,7 @@
 
   // ===================== GM 工具 =====================
 
-  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue', audioRetry: 'swc_audio_retry' };
+  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue', audioRetry: 'swc_audio_retry', ingested: 'swc_ingested' };
 
   const DEFAULT_SETTINGS = {
     inited: false,
@@ -428,6 +429,7 @@
   let personalUnkSet = new Set(gmGet(GMK.personal, []));
   let queue = gmGet(GMK.queue, []);
   let audioRetryList = gmGet(GMK.audioRetry, []);
+  let ingestedIds = new Set(gmGet(GMK.ingested, [])); // 已成功入库的词条 id 墓碑，防止重复入队/恢复时复活
 
   function gmGet(key, dflt) {
     try { const v = GM_getValue(key); return v === undefined || v === null ? dflt : JSON.parse(v); }
@@ -439,6 +441,29 @@
   function saveSaved() { gmSet(GMK.saved, [...savedSet]); }
   function savePersonal() { gmSet(GMK.personal, [...personalUnkSet]); }
   function saveQueue() { gmSet(GMK.queue, queue); }
+  function saveIngested() {
+    const MAX = 3000;
+    if (ingestedIds.size > MAX) ingestedIds = new Set([...ingestedIds].slice(ingestedIds.size - MAX));
+    gmSet(GMK.ingested, [...ingestedIds]);
+  }
+  // 队列读改写一律基于存储最新值，避免多标签页旧状态回写复活已入库的词
+  function loadQueue() { queue = gmGet(GMK.queue, []); return queue; }
+  function addQueueItem(item) {
+    const q = loadQueue();
+    if (q.some((x) => x.id === item.id)) return 'dup-queue';
+    if (ingestedIds.has(item.id)) return 'dup-ingested';
+    q.push(item);
+    gmSet(GMK.queue, q);
+    queue = q;
+    return 'added';
+  }
+  function removeQueueItem(id) {
+    const q = loadQueue();
+    const idx = q.findIndex((x) => x.id === id);
+    if (idx >= 0) q.splice(idx, 1);
+    gmSet(GMK.queue, q);
+    queue = q;
+  }
   function saveAudioRetry() { gmSet(GMK.audioRetry, audioRetryList); }
 
   function gmReq(opts) {
@@ -747,10 +772,11 @@
         dateAdded: Date.now(),
         translation: '', note: '', glosses: el._glosses || []
       };
-      if (!queue.some((q) => q.id === item.id)) {
-        queue.push(item); saveQueue(); updateBadge();
-        toast('已加入待办队列（' + queue.length + ' 词），读完点徽标入库');
-      } else toast('该词该句已在队列中');
+      const res = addQueueItem(item);
+      updateBadge();
+      if (res === 'added') toast('已加入待办队列（' + queue.length + ' 词），读完点徽标入库');
+      else if (res === 'dup-ingested') toast('该词该句已入库过，无需重复建卡（同词不同句可再建）');
+      else toast('该词该句已在待办队列中');
       closePopup(); rescan();
     };
   }
@@ -819,6 +845,7 @@
 
   function refreshPanel() {
     if (!panelEl) return;
+    loadQueue();
     panelEl.querySelector('[data-swc-count]').textContent = queue.length + ' 个词待入库';
     const list = panelEl.querySelector('[data-swc-list]');
     if (!queue.length) {
@@ -830,21 +857,21 @@
       '<div style="flex:1;min-width:0;"><b>' + esc(it.word) + '</b>' +
       '<span style="color:#aaa;font-size:11px;"> ' + esc(it.host) + '</span>' +
       '<div data-swc-sent style="color:#777;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(it.sentence) + '</div></div>' +
-      '<button data-swc-edit="' + i + '" title="编辑上下文" style="border:0;background:none;color:#bbb;cursor:pointer;font-size:13px;">✎</button>' +
-      '<button data-swc-del="' + i + '" style="border:0;background:none;color:#ccc;cursor:pointer;font-size:14px;">✕</button></div>'
+      '<button data-swc-edit="' + esc(it.id) + '" title="编辑上下文" style="border:0;background:none;color:#bbb;cursor:pointer;font-size:13px;">✎</button>' +
+      '<button data-swc-del="' + esc(it.id) + '" style="border:0;background:none;color:#ccc;cursor:pointer;font-size:14px;">✕</button></div>'
     ).join('');
     list.querySelectorAll('[data-swc-del]').forEach((b) => {
-      b.onclick = () => { queue.splice(+b.dataset.swcDel, 1); saveQueue(); refreshPanel(); updateBadge(); };
+      b.onclick = () => { removeQueueItem(b.dataset.swcDel); refreshPanel(); updateBadge(); };
     });
     list.querySelectorAll('[data-swc-edit]').forEach((b) => {
-      b.onclick = () => startEdit(+b.dataset.swcEdit);
+      b.onclick = () => startEdit(b.dataset.swcEdit);
     });
   }
 
-  function startEdit(i) {
-    const it = queue[i];
+  function startEdit(id) {
+    const it = queue.find((x) => x.id === id);
     if (!it) return;
-    const sentEl = panelEl.querySelector('[data-swc-edit="' + i + '"]').parentElement.querySelector('[data-swc-sent]');
+    const sentEl = panelEl.querySelector('[data-swc-edit="' + id + '"]').parentElement.querySelector('[data-swc-sent]');
     sentEl.innerHTML =
       '<textarea data-swc-ta style="width:100%;box-sizing:border-box;height:64px;font:12px/1.4 system-ui,sans-serif;padding:4px;border:1px solid #ccc;border-radius:4px;resize:vertical;">' + esc(it.sentence) + '</textarea>' +
       '<div style="display:flex;gap:6px;margin-top:4px;">' +
@@ -910,15 +937,18 @@
     try {
       await anki('version');
       await ensureAnkiSetup();
-      for (let i = 0; i < queue.length; i++) {
-        const it = queue[i];
-        prog.textContent = '入库中 ' + (i + 1) + '/' + queue.length + '：' + it.word;
+      const items = loadQueue().slice();
+      for (let n = 0; n < items.length; n++) {
+        const it = items[n];
+        if (!loadQueue().some((x) => x.id === it.id)) continue; // 已在其他标签页处理
+        prog.textContent = '入库中 ' + (n + 1) + '/' + items.length + '：' + it.word;
         try {
           const audioOk = await ingestOne(it);
           ok++;
           if (!audioOk) audioFail.push(it.word);
-          queue.splice(i, 1); i--;
-          saveQueue(); refreshPanel(); updateBadge();
+          ingestedIds.add(it.id); saveIngested();
+          removeQueueItem(it.id);
+          refreshPanel(); updateBadge();
         } catch (err) {
           fail.push(it.word + '（' + err.message + '）');
         }
@@ -1162,8 +1192,9 @@
       if (!text) { toast('云端还没有备份文件', 3500); return; }
       const remote = JSON.parse(text);
       const m = mergeBackup(
-        { known: [...knownSet], saved: [...savedSet], personal: [...personalUnkSet], queue },
-        remote
+        { known: [...knownSet], saved: [...savedSet], personal: [...personalUnkSet], queue: loadQueue() },
+        remote,
+        [...ingestedIds]
       );
       knownSet = new Set(m.known); saveKnown();
       savedSet = new Set(m.saved); saveSaved();
@@ -1388,6 +1419,8 @@
         .catch(() => toast('Anki 生词同步失败（Anki 没开？稍后可在菜单手动同步）', 4000));
     }
   }
+
+  window.addEventListener('focus', () => { loadQueue(); refreshPanel(); updateBadge(); });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();

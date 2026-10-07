@@ -249,6 +249,15 @@ t('mergeBackup: 并集合并+队列去重', () => {
   assert.equal(r.queue.length, 2);
   assert.deepEqual(r.counts, { known: 2, saved: 1, personal: 0, queueAdded: 1 });
 });
+t('mergeBackup: 墓碑拦掉已入库词，恢复不复活旧队列', () => {
+  const r = fns.mergeBackup(
+    { known: [], saved: [], personal: [], queue: [] },
+    { queue: [{ id: 'done1' }, { id: 'done2' }, { id: 'fresh' }] },
+    ['done1', 'done2']
+  );
+  assert.deepEqual(r.queue.map((q) => q.id), ['fresh']);
+  assert.equal(r.counts.queueAdded, 1);
+});
 t('s3RegionService: 阿里OSS 用 service=oss 且 region 自动补 oss- 前缀', () => {
   assert.deepEqual(fns.s3RegionService('mybk.oss-cn-hangzhou.aliyuncs.com', 'cn-hangzhou'),
     { region: 'oss-cn-hangzhou', service: 'oss' });
