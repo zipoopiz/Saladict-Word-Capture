@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.5.0
+// @version      0.5.1
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -681,7 +681,19 @@
       ::highlight(swc-unknown) { background-color: #ffe08a; color: inherit; }
       ::highlight(swc-saved) { background-color: #ececec; color: #8a8a8a; }
       ::highlight(swc-queued) { background-color: #ffe08a; color: inherit; }
-      .swc-popup, .swc-panel, .swc-phbtn { all: initial; font-family: system-ui, -apple-system, sans-serif; }
+      [data-swc-ui] { all: initial; font-family: system-ui, -apple-system, sans-serif; }
+      [data-swc-ui] button {
+        all: initial;
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: auto; min-height: 0; max-height: none;
+        line-height: 1.2;
+        font-family: system-ui, -apple-system, sans-serif;
+        white-space: nowrap;
+        cursor: pointer;
+      }
       *::highlight(swc-unknown) { background-color: #ffe08a; color: inherit; }
       *::highlight(swc-saved) { background-color: #ececec; color: #8a8a8a; }
       *::highlight(swc-queued) { background-color: #ffe08a; color: inherit; }
