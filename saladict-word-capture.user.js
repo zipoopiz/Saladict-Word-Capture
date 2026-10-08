@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.5.3
+// @version      0.5.4
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -583,6 +583,8 @@
   // ===================== 扫描与高亮 =====================
 
   const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'PRE', 'CODE', 'TEXTAREA', 'NOSCRIPT', 'SVG', 'INPUT', 'SELECT']);
+  // 块级祖先选择器：划词短语必须两端落在同一块内；div 为兜底（closest 取最近块，跨子块仍会被 contains 拒绝）
+  const BLOCK_SEL = 'p,h1,h2,h3,h4,h5,h6,li,dd,dt,blockquote,td,th,figcaption,summary,div:not([contenteditable]),[role="article"]';
   const TOKEN_RE = /[A-Za-z][A-Za-z'’]*/g;
   const MAX_NODES = 30000;
 
@@ -723,9 +725,7 @@
     }
     if (!node || node.nodeType !== Node.TEXT_NODE || !node.nodeValue) return null;
     // 块级上下文全文 + 点击位置映射
-    const block = (node.parentElement && node.parentElement.closest(
-      'p,h1,h2,h3,h4,h5,h6,li,dd,dt,blockquote,td,th,figcaption,summary,[role="article"]'
-    )) || node.parentElement;
+    const block = (node.parentElement && node.parentElement.closest(BLOCK_SEL)) || node.parentElement;
     if (!block) return null;
     const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => (n.parentElement && (SKIP_TAGS.has(n.parentElement.tagName) ||
@@ -757,11 +757,23 @@
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
-  // YouTube 等站点启用 Trusted Types CSP，innerHTML 直接赋值会被拦截，统一经 policy 包装
-  let ttPolicy = null;
-  try { ttPolicy = window.trustedTypes.createPolicy('swc', { createHTML: (s) => s }); } catch (e) { /* 同名 policy 已存在或无 trustedTypes */ }
+  // YouTube 等站点启用 Trusted Types CSP，innerHTML 直接赋值会被拦截，统一经 policy 包装。
+  // 惰性求值：站点自建 default policy 的时机晚于脚本注入，首次 setHtml 时再取
+  let ttPolicy = null, ttTried = false;
+  function ttPolicyGet() {
+    if (!ttTried) {
+      ttTried = true;
+      try { ttPolicy = window.trustedTypes.createPolicy('swc', { createHTML: (s) => s }); }
+      catch (e) {
+        // 站点 policy 白名单不含 'swc'（如 fanfiction.net）时退回站点默认 policy
+        try { ttPolicy = (window.trustedTypes && window.trustedTypes.defaultPolicy) || null; } catch (e2) { ttPolicy = null; }
+      }
+    }
+    return ttPolicy;
+  }
   function setHtml(el, html) {
-    try { el.innerHTML = ttPolicy ? ttPolicy.createHTML(html) : html; }
+    const p = ttPolicyGet();
+    try { el.innerHTML = p ? p.createHTML(html) : html; }
     catch (e) {
       // 兜底：转纯文本，保证弹窗结构仍可用
       el.textContent = html;
@@ -877,7 +889,7 @@
     if (range.startContainer.nodeType !== Node.TEXT_NODE || range.endContainer.nodeType !== Node.TEXT_NODE) return null;
     const startEl = range.startContainer.parentElement, endEl = range.endContainer.parentElement;
     if (!startEl || !endEl) return null;
-    const block = startEl.closest('p,h1,h2,h3,h4,h5,h6,li,dd,dt,blockquote,td,th,figcaption,summary,[role="article"]');
+    const block = startEl.closest(BLOCK_SEL);
     if (!block || !block.contains(endEl)) return null; // 跨段落块拒绝
     const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => (n.parentElement && (SKIP_TAGS.has(n.parentElement.tagName) ||
