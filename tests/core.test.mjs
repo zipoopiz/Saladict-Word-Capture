@@ -11,7 +11,7 @@ const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
   clozeify, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
   sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr,
-  ossPresignV2, isOssHost, bytesToB64, SWC_MODEL };`)();
+  ossPresignV2, isOssHost, bytesToB64, SWC_MODEL, normPhrase, parsePhraseSelection };`)();
 
 let passed = 0;
 const pending = [];
@@ -142,6 +142,56 @@ t('extract: 超长句子截断后仍含词且长度受限', () => {
   assert.ok(r.sentence.length <= 330);
   assert.ok(r.sentence.includes('hallucination'));
   assert.ok(fns.clozeify(r.sentence, r.word).includes('{{c1::hallucination}}'));
+});
+
+// ---- 短语划词 ----
+t('phrase: parsePhraseSelection 基本形态', () => {
+  assert.equal(fns.parsePhraseSelection('put off'), 'put off');
+  assert.equal(fns.parsePhraseSelection('"Put Off."'), 'put off');
+  assert.equal(fns.parsePhraseSelection('  look   forward to '), 'look forward to');
+  assert.equal(fns.parsePhraseSelection('well-known figures are'), 'well-known figures are');
+});
+t('phrase: 弯引号归一化', () => {
+  assert.equal(fns.parsePhraseSelection('don’t give up'), "don't give up");
+});
+t('phrase: 单词/超长/含内部标点拒绝', () => {
+  assert.equal(fns.parsePhraseSelection('put'), null);
+  assert.equal(fns.parsePhraseSelection('one two three four five six'), null);
+  assert.equal(fns.parsePhraseSelection('put, off'), null);
+  assert.equal(fns.parsePhraseSelection(''), null);
+});
+t('phrase: 2-5 词句子片段按规则放行', () => {
+  assert.equal(fns.parsePhraseSelection('I put it off.'), 'i put it off');
+});
+t('phrase: normPhrase 折叠空白剥标点', () => {
+  assert.equal(fns.normPhrase('  Put   Off. '), 'put off');
+  assert.equal(fns.normPhrase('’Round the Bend'), 'round the bend');
+});
+t('phrase: extractSentenceAt 带 endIdx 提取短语与出现序号', () => {
+  const text = 'We put off the meeting. They put off the trip and put off the rest.';
+  // 选中同句最后一处 "put off"（前一句的 meeting 不应混入）
+  const start = text.lastIndexOf('put off');
+  const r = fns.extractSentenceAt(text, start, 320, start + 'put off'.length);
+  assert.equal(r.word, 'put off');
+  assert.equal(r.occurrence, 1); // 同句前面已出现一次
+  assert.ok(r.sentence.includes('put off the rest'));
+  assert.ok(!r.sentence.includes('meeting'));
+  assert.ok(fns.clozeify(r.sentence, r.word).split('{{c1::put off}}').length - 1 === 2);
+});
+t('phrase: clozeify 短语多处出现全挖空', () => {
+  assert.equal(fns.clozeify('They put off and put off the trip.', 'put off'),
+    'They {{c1::put off}} and {{c1::put off}} the trip.');
+});
+t('phrase: mergeBackup 短语表并集', () => {
+  const r = fns.mergeBackup(
+    { known: [], saved: [], personal: [], queue: [], phrases: ['put off'] },
+    { phrases: ['Put  Off.', 'look forward to'] }
+  );
+  assert.deepEqual(r.phrases.sort(), ['look forward to', 'put off']);
+});
+t('phrase: buildBackupDump 带 phrases 字段', () => {
+  const d = fns.buildBackupDump([], [], [], [], {}, ['put off']);
+  assert.deepEqual(d.phrases, ['put off']);
 });
 
 // ---- 词典解析（真实响应夹具） ----

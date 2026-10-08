@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.4.2
+// @version      0.5.0
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -160,10 +160,12 @@
   }
 
   // 从全文 clickIdx 处提取所在句子；过长时以词为中心截断
-  function extractSentenceAt(text, idx, maxLen) {
+  // endIdx 可选：短语选区的显式结束边界（如 "put off" 的 off 末尾），不传则按单词边界
+  function extractSentenceAt(text, idx, maxLen, endIdx) {
     maxLen = maxLen || 320;
     const wb = findWordBounds(text, idx);
     if (!wb) return null;
+    if (endIdx != null && endIdx > idx && endIdx <= text.length) wb.end = endIdx;
     const word = text.slice(wb.start, wb.end);
     const sents = splitSentences(text);
     let s = sents.find((x) => x.start <= wb.start && wb.end <= x.end) ||
@@ -202,6 +204,17 @@
   function clozeify(sentence, surface) {
     const esc = String(surface).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return String(sentence).replace(new RegExp('\\b' + esc + '\\b', 'gi'), (m) => '{{c1::' + m + '}}');
+  }
+
+  // 规范化短语：小写、空白折叠、剥首尾标点（存表/查重用）
+  function normPhrase(word) {
+    return String(word || '').replace(/’/g, "'").trim().toLowerCase()
+      .replace(/\s+/g, ' ').replace(/^[^\w]+|[^\w]+$/g, '');
+  }
+  // 划词选区 -> 有效短语；严格 2-5 个连续英文词（内部只许空白，逗号句号等一律拒绝），选区剥首尾标点后须整体匹配
+  function parsePhraseSelection(selText) {
+    const s = String(selText || '').replace(/’/g, "'").replace(/^[^\w]+|[^\w]+$/g, '').trim();
+    return /^[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){1,4}$/.test(s) ? normPhrase(s) : null;
   }
 
   function parseYoudaoEc(data) {
@@ -362,28 +375,30 @@
     return out;
   }
 
-  function buildBackupDump(knownArr, savedArr, personalArr, queueArr, settings) {
+  function buildBackupDump(knownArr, savedArr, personalArr, queueArr, settings, phrasesArr) {
     const s = Object.assign({}, settings || {});
     delete s.llmKey; // 密钥不上云
     return {
       app: 'swc', version: 1, exportedAt: new Date().toISOString(),
       known: knownArr, saved: savedArr, personalUnknown: personalArr,
-      queue: queueArr, settings: s
+      queue: queueArr, phrases: phrasesArr || [], settings: s
     };
   }
 
-  // 合并语义：词表取并集，队列按 id 去重追加，不触碰本机设置
+  // 合并语义：词表取并集，队列按 id 去重追加，短语表取并集，不触碰本机设置
   function mergeBackup(local, remote, ingestedIds) {
     const mk = new Set(local.known), ms = new Set(local.saved), mp = new Set(local.personal);
+    const mph = new Set(local.phrases || []);
     const r = remote || {};
     (r.known || []).forEach((w) => mk.add(w));
     (r.saved || []).forEach((w) => ms.add(w));
     (r.personalUnknown || []).forEach((w) => mp.add(w));
+    (r.phrases || []).forEach((p) => { if (p) mph.add(normPhrase(p)); });
     const ids = new Set(local.queue.map((q) => q.id));
     const ing = new Set(ingestedIds || []);
     const addedQueue = (r.queue || []).filter((q) => q && q.id && !ids.has(q.id) && !ing.has(q.id));
     return {
-      known: [...mk], saved: [...ms], personal: [...mp],
+      known: [...mk], saved: [...ms], personal: [...mp], phrases: [...mph],
       queue: local.queue.concat(addedQueue),
       counts: {
         known: (r.known || []).length, saved: (r.saved || []).length,
@@ -404,7 +419,7 @@
 
   // ===================== GM 工具 =====================
 
-  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue', audioRetry: 'swc_audio_retry', ingested: 'swc_ingested' };
+  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue', audioRetry: 'swc_audio_retry', ingested: 'swc_ingested', phrases: 'swc_phrases' };
 
   const DEFAULT_SETTINGS = {
     inited: false,
@@ -430,6 +445,7 @@
   let queue = gmGet(GMK.queue, []);
   let audioRetryList = gmGet(GMK.audioRetry, []);
   let ingestedIds = new Set(gmGet(GMK.ingested, [])); // 已成功入库的词条 id 墓碑，防止重复入队/恢复时复活
+  let phraseSet = new Set(gmGet(GMK.phrases, [])); // 已入库短语表（规范小写），用于入库后的灰色高亮
 
   function gmGet(key, dflt) {
     try { const v = GM_getValue(key); return v === undefined || v === null ? dflt : JSON.parse(v); }
@@ -445,6 +461,11 @@
     const MAX = 3000;
     if (ingestedIds.size > MAX) ingestedIds = new Set([...ingestedIds].slice(ingestedIds.size - MAX));
     gmSet(GMK.ingested, [...ingestedIds]);
+  }
+  function savePhrases() {
+    const MAX = 1000;
+    if (phraseSet.size > MAX) phraseSet = new Set([...phraseSet].slice(phraseSet.size - MAX));
+    gmSet(GMK.phrases, [...phraseSet]);
   }
   // 队列读改写一律基于存储最新值，避免多标签页旧状态回写复活已入库的词
   function loadQueue() { queue = gmGet(GMK.queue, []); return queue; }
@@ -580,7 +601,16 @@
   }
 
   function collectRanges() {
-    const unk = [], sav = [];
+    const unk = [], sav = [], phr = [];
+    // 短语高亮清单：待办队列中的多词条目（黄）+ 已入库短语（灰）；同短语两态并存时队列色优先
+    // 只收多词条目：单词条目保持原有分类高亮行为不变
+    const queuedPhrases = new Set(loadQueue()
+      .map((it) => normPhrase(it.word))
+      .filter((p) => p && p.includes(' ')));
+    const savedPhrases = [...phraseSet].filter((p) => !queuedPhrases.has(p));
+    const phraseRe = (p) => new RegExp('\\b' + p.split(' ').map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+') + '\\b', 'gi');
+    const queuedRes = [...queuedPhrases].map(phraseRe);
+    const savedRes = savedPhrases.map(phraseRe);
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         if (!n.nodeValue || n.nodeValue.length < 3) return NodeFilter.FILTER_REJECT;
@@ -606,8 +636,22 @@
         r.setEnd(node, m.index + w.length);
         (st === 'saved' ? sav : unk).push(r);
       }
+      // 短语匹配（单文本节点内，空白归一化）：入队黄色 / 已入库灰色
+      const span = (re, arr) => {
+        re.lastIndex = 0;
+        let pm;
+        while ((pm = re.exec(text)) !== null) {
+          const r = document.createRange();
+          r.setStart(node, pm.index);
+          r.setEnd(node, pm.index + pm[0].length);
+          arr.push(r);
+          if (pm[0].length === 0) break;
+        }
+      };
+      for (const re of queuedRes) span(re, phr);
+      for (const re of savedRes) span(re, sav);
     }
-    return { unk, sav };
+    return { unk, sav, phr };
   }
 
   function rescan() {
@@ -615,7 +659,9 @@
     if (scanning) { rescanPending = true; return; }
     scanning = true;
     try {
-      const { unk, sav } = collectRanges();
+      const { unk, sav, phr } = collectRanges();
+      // 先注册短语桶：重叠处后注册的单词高亮覆盖（颜色与生词同黄，视觉一致）
+      CSS.highlights.set('swc-queued', phr.length ? new Highlight(...phr) : new Highlight());
       CSS.highlights.set('swc-unknown', unk.length ? new Highlight(...unk) : new Highlight());
       CSS.highlights.set('swc-saved', sav.length ? new Highlight(...sav) : new Highlight());
     } finally {
@@ -634,9 +680,11 @@
     const css = `
       ::highlight(swc-unknown) { background-color: #ffe08a; color: inherit; }
       ::highlight(swc-saved) { background-color: #ececec; color: #8a8a8a; }
-      .swc-popup, .swc-panel { all: initial; font-family: system-ui, -apple-system, sans-serif; }
+      ::highlight(swc-queued) { background-color: #ffe08a; color: inherit; }
+      .swc-popup, .swc-panel, .swc-phbtn { all: initial; font-family: system-ui, -apple-system, sans-serif; }
       *::highlight(swc-unknown) { background-color: #ffe08a; color: inherit; }
       *::highlight(swc-saved) { background-color: #ececec; color: #8a8a8a; }
+      *::highlight(swc-queued) { background-color: #ffe08a; color: inherit; }
     `;
     try { GM_addStyle(css); }
     catch (e) {
@@ -793,7 +841,144 @@
     showPopup(e.clientX, e.clientY, info);
   }, true);
 
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePopup(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closePopup(); closePhraseBtn(); } });
+
+  // ===================== 划词短语收录 =====================
+
+  let phraseBtnEl = null;
+
+  function closePhraseBtn() { if (phraseBtnEl) { phraseBtnEl.remove(); phraseBtnEl = null; } }
+
+  // 把选区 Range 映射进共同块级祖先的拼接文本，返回 {full, start, end}；跨块/非文本边界返回 null
+  function selectionInfoInBlock(range) {
+    if (range.startContainer.nodeType !== Node.TEXT_NODE || range.endContainer.nodeType !== Node.TEXT_NODE) return null;
+    const startEl = range.startContainer.parentElement, endEl = range.endContainer.parentElement;
+    if (!startEl || !endEl) return null;
+    const block = startEl.closest('p,h1,h2,h3,h4,h5,h6,li,dd,dt,blockquote,td,th,figcaption,summary,[role="article"]');
+    if (!block || !block.contains(endEl)) return null; // 跨段落块拒绝
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement && (SKIP_TAGS.has(n.parentElement.tagName) ||
+        n.parentElement.closest('[data-swc-ui]') || excluded(n.parentElement)))
+        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+    });
+    let full = '', start = -1, end = -1, n;
+    while ((n = walker.nextNode())) {
+      if (full && !/\s$/.test(full) && n.nodeValue && !/^\s/.test(n.nodeValue)) full += ' ';
+      if (n === range.startContainer) start = full.length + range.startOffset;
+      if (n === range.endContainer) end = full.length + range.endOffset;
+      full += n.nodeValue;
+    }
+    if (start < 0 || end <= start) return null;
+    return { full, start, end };
+  }
+
+  function checkSelectionForPhrase() {
+    closePhraseBtn();
+    if (popupEl) return; // 单词浮层打开时不抢
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+    const phrase = parsePhraseSelection(String(sel));
+    if (!phrase) return;
+    const range = sel.getRangeAt(0);
+    const si = selectionInfoInBlock(range);
+    if (!si) { toast('短语收录仅支持同一段落内的选择', 2000); return; }
+    // 精确化 token 边界（剥选区首尾标点与空白）
+    const seg = si.full.slice(si.start, si.end);
+    const m1 = /[A-Za-z]/.exec(seg);
+    const m2 = /([A-Za-z][A-Za-z'-]*)[^\sA-Za-z'-]*\s*$/.exec(seg);
+    if (!m1 || !m2) return;
+    const sIdx = si.start + m1.index;
+    const eIdx = si.start + m2.index + m2[1].length;
+    const surface = si.full.slice(sIdx, eIdx);
+    if (normPhrase(surface) !== phrase) return;
+    const info = extractSentenceAt(si.full, sIdx, 320, eIdx);
+    if (!info) return;
+    const rect = range.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) return;
+    const btn = document.createElement('div');
+    btn.className = 'swc-phbtn';
+    btn.dataset.swcUi = '1';
+    btn.textContent = '＋ 收录短语';
+    btn.style.cssText = 'position:fixed;z-index:2147483647;background:#f9690e;color:#fff;' +
+      'font:12px/1 system-ui,sans-serif;padding:7px 11px;border-radius:7px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.28);';
+    btn.onclick = (ev) => { ev.stopPropagation(); showPhrasePopup(rect, info, phrase); closePhraseBtn(); };
+    document.documentElement.appendChild(btn);
+    const bw = btn.offsetWidth || 90, bh = btn.offsetHeight || 30;
+    btn.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - bw / 2, window.innerWidth - bw - 8)) + 'px';
+    const top = rect.bottom + 6;
+    btn.style.top = (top + bh > window.innerHeight ? Math.max(8, rect.top - bh - 6) : top) + 'px';
+    phraseBtnEl = btn;
+  }
+
+  function showPhrasePopup(rect, info, phrase) {
+    closePopup();
+    const meta = pageMeta();
+    const ingested = phraseSet.has(phrase);
+    const cloze = clozeify(info.sentence, info.word);
+    const preview = esc(cloze).replace(/\{\{c1::(.*?)\}\}/g, '<mark>$1</mark>');
+    const el = document.createElement('div');
+    el.className = 'swc-popup';
+    el.dataset.swcUi = '1';
+    el.style.cssText = 'position:fixed;z-index:2147483646;width:340px;max-height:60vh;overflow:auto;' +
+      'background:#fff;color:#333;border:1px solid #ddd;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);' +
+      'font:14px/1.5 system-ui,sans-serif;padding:12px 14px;';
+    el.innerHTML =
+      '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;">' +
+      '<b style="font-size:17px;">' + esc(info.word) + '</b>' +
+      '<span data-swc-ph style="color:#888;font-size:12px;"></span>' +
+      (ingested ? '<span style="color:#999;font-size:12px;">已入库过</span>' : '') + '</div>' +
+      '<div data-swc-gloss style="color:#456;font-size:13px;margin-bottom:6px;">查词典中…</div>' +
+      '<div style="border-left:3px solid #ffe08a;padding:4px 8px;margin-bottom:10px;font-size:12.5px;color:#555;">' + preview + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<button data-swc-add style="flex:1;padding:6px 0;border:0;border-radius:6px;background:#f9690e;color:#fff;font-size:13px;cursor:pointer;">' +
+      (ingested ? '再建一张卡' : '生成卡片') + '</button>' +
+      '<button data-swc-x style="padding:6px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#999;font-size:13px;cursor:pointer;">×</button></div>';
+    document.documentElement.appendChild(el);
+    el.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 356)) + 'px';
+    el.style.top = (rect.bottom + 12 + 180 > window.innerHeight ? Math.max(8, rect.top - 190) : rect.bottom + 12) + 'px';
+    popupEl = el;
+    // 词典释义异步填充（有道 jsonapi / TTS 对短语直接可用）
+    fetchGlosses(info.word).then((d) => {
+      if (popupEl !== el) return;
+      el.querySelector('[data-swc-ph]').textContent = d.phonetic ? '/' + d.phonetic + '/' : '';
+      el.querySelector('[data-swc-gloss]').innerHTML = d.glosses.length
+        ? d.glosses.slice(0, 3).map(esc).join('<br>')
+        : '<span style="color:#c0392b">词典没有查到该短语</span>';
+      el._glosses = d.glosses;
+    });
+    el.addEventListener('click', (ev) => ev.stopPropagation());
+    el.querySelector('[data-swc-x]').onclick = closePopup;
+    el.querySelector('[data-swc-add]').onclick = () => {
+      const item = {
+        id: hashStr(phrase + '|' + info.sentence),
+        word: info.word,
+        sentence: info.sentence,
+        cloze: cloze,
+        url: meta.url, title: meta.title, favicon: meta.favicon,
+        host: hostOf(meta.url),
+        dateAdded: Date.now(),
+        translation: '', note: '', glosses: el._glosses || []
+      };
+      const res = addQueueItem(item);
+      updateBadge();
+      if (res === 'added') toast('已加入待办队列（' + queue.length + ' 条），读完点徽标入库');
+      else if (res === 'dup-ingested') toast('该短语该句已入库过，无需重复建卡（同短语不同句可再建）');
+      else toast('该短语该句已在待办队列中');
+      closePopup(); rescan();
+    };
+  }
+
+  document.addEventListener('mouseup', (e) => {
+    if (e.target.closest && e.target.closest('[data-swc-ui]')) return;
+    setTimeout(checkSelectionForPhrase, 0); // 选区状态在 mouseup 后才落定
+  });
+
+  document.addEventListener('selectionchange', () => {
+    if (phraseBtnEl) {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) closePhraseBtn();
+    }
+  });
 
   // ===================== 队列面板与入库 =====================
 
@@ -835,7 +1020,7 @@
     el.querySelector('[data-swc-close]').onclick = () => { el.style.display = 'none'; };
     el.querySelector('[data-swc-clear]').onclick = () => {
       if (!queue.length || !confirm('清空全部待办词？')) return;
-      queue = []; saveQueue(); refreshPanel(); updateBadge();
+      queue = []; saveQueue(); refreshPanel(); updateBadge(); rescan();
     };
     el.querySelector('[data-swc-ingest]').onclick = ingestAll;
     panelEl = el;
@@ -861,7 +1046,7 @@
       '<button data-swc-del="' + esc(it.id) + '" style="border:0;background:none;color:#ccc;cursor:pointer;font-size:14px;">✕</button></div>'
     ).join('');
     list.querySelectorAll('[data-swc-del]').forEach((b) => {
-      b.onclick = () => { removeQueueItem(b.dataset.swcDel); refreshPanel(); updateBadge(); };
+      b.onclick = () => { removeQueueItem(b.dataset.swcDel); refreshPanel(); updateBadge(); rescan(); };
     });
     list.querySelectorAll('[data-swc-edit]').forEach((b) => {
       b.onclick = () => startEdit(b.dataset.swcEdit);
@@ -949,6 +1134,9 @@
           if (r === 'already') dupSkip++;
           else if (!r) audioFail.push(it.word);
           ingestedIds.add(it.id); saveIngested();
+          if (/\s/.test(String(it.word))) { // 短语词条：进已入库短语表，保持灰色高亮
+            phraseSet.add(normPhrase(it.word)); savePhrases();
+          }
           removeQueueItem(it.id);
           done++;
           refreshPanel(); updateBadge();
@@ -1199,7 +1387,7 @@
     const err = cloudCheck();
     if (err) { toast(err, 4000); return; }
     try {
-      const dump = buildBackupDump([...knownSet], [...savedSet], [...personalUnkSet], queue, settings);
+      const dump = buildBackupDump([...knownSet], [...savedSet], [...personalUnkSet], queue, settings, [...phraseSet]);
       await cloudPut(JSON.stringify(dump));
       toast('已备份到云：熟词 ' + dump.known.length + ' / 已收藏 ' + dump.saved.length +
         ' / 个人生词 ' + dump.personalUnknown.length + ' / 待办 ' + dump.queue.length, 3500);
@@ -1214,13 +1402,14 @@
       if (!text) { toast('云端还没有备份文件', 3500); return; }
       const remote = JSON.parse(text);
       const m = mergeBackup(
-        { known: [...knownSet], saved: [...savedSet], personal: [...personalUnkSet], queue: loadQueue() },
+        { known: [...knownSet], saved: [...savedSet], personal: [...personalUnkSet], queue: loadQueue(), phrases: [...phraseSet] },
         remote,
         [...ingestedIds]
       );
       knownSet = new Set(m.known); saveKnown();
       savedSet = new Set(m.saved); saveSaved();
       personalUnkSet = new Set(m.personal); savePersonal();
+      phraseSet = new Set(m.phrases || []); savePhrases();
       queue = m.queue; saveQueue();
       refreshPanel(); updateBadge(); rescan();
       toast('恢复完成（合并）：云端熟词 ' + m.counts.known + ' / 已收藏 ' + m.counts.saved +
