@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.5.2
+// @version      0.5.3
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -757,6 +757,17 @@
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  // YouTube 等站点启用 Trusted Types CSP，innerHTML 直接赋值会被拦截，统一经 policy 包装
+  let ttPolicy = null;
+  try { ttPolicy = window.trustedTypes.createPolicy('swc', { createHTML: (s) => s }); } catch (e) { /* 同名 policy 已存在或无 trustedTypes */ }
+  function setHtml(el, html) {
+    try { el.innerHTML = ttPolicy ? ttPolicy.createHTML(html) : html; }
+    catch (e) {
+      // 兜底：转纯文本，保证弹窗结构仍可用
+      el.textContent = html;
+    }
+  }
+
   async function showPopup(x, y, info) {
     closePopup();
     const meta = pageMeta();
@@ -772,7 +783,7 @@
     el.style.cssText = 'position:fixed;z-index:2147483646;width:340px;max-height:60vh;overflow:auto;' +
       'background:#fff;color:#333;border:1px solid #ddd;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);' +
       'font:14px/1.5 system-ui,sans-serif;padding:12px 14px;';
-    el.innerHTML =
+    setHtml(el,
       '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;">' +
       '<b style="font-size:17px;">' + esc(info.word) + '</b>' +
       '<span data-swc-ph style="color:#888;font-size:12px;"></span>' +
@@ -786,7 +797,7 @@
       (isKnownWord
         ? '<button data-swc-mark style="padding:6px 10px;border:1px solid #e0a030;border-radius:6px;background:#fff;color:#b06f10;font-size:13px;cursor:pointer;">其实不认识，加入生词</button>'
         : '<button data-swc-know style="padding:6px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#555;font-size:13px;cursor:pointer;">我认识，不再问</button>') +
-      '<button data-swc-x style="padding:6px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#999;font-size:13px;cursor:pointer;">×</button></div>';
+      '<button data-swc-x style="padding:6px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#999;font-size:13px;cursor:pointer;">×</button></div>');
     document.documentElement.appendChild(el);
 
     const vw = window.innerWidth, vh = window.innerHeight;
@@ -799,9 +810,9 @@
     fetchGlosses(info.word).then((d) => {
       if (popupEl !== el) return;
       el.querySelector('[data-swc-ph]').textContent = d.phonetic ? '/' + d.phonetic + '/' : '';
-      el.querySelector('[data-swc-gloss]').innerHTML = d.glosses.length
+      setHtml(el.querySelector('[data-swc-gloss]'), d.glosses.length
         ? d.glosses.slice(0, 3).map(esc).join('<br>')
-        : '<span style="color:#c0392b">词典没有查到该词</span>';
+        : '<span style="color:#c0392b">词典没有查到该词</span>');
       el._glosses = d.glosses;
     });
 
@@ -936,7 +947,7 @@
     el.style.cssText = 'position:fixed;z-index:2147483646;width:340px;max-height:60vh;overflow:auto;' +
       'background:#fff;color:#333;border:1px solid #ddd;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);' +
       'font:14px/1.5 system-ui,sans-serif;padding:12px 14px;';
-    el.innerHTML =
+    setHtml(el,
       '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px;">' +
       '<b style="font-size:17px;">' + esc(info.word) + '</b>' +
       '<span data-swc-ph style="color:#888;font-size:12px;"></span>' +
@@ -946,7 +957,7 @@
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
       '<button data-swc-add style="flex:1;padding:6px 0;border:0;border-radius:6px;background:#f9690e;color:#fff;font-size:13px;cursor:pointer;">' +
       (ingested ? '再建一张卡' : '生成卡片') + '</button>' +
-      '<button data-swc-x style="padding:6px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#999;font-size:13px;cursor:pointer;">×</button></div>';
+      '<button data-swc-x style="padding:6px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#999;font-size:13px;cursor:pointer;">×</button></div>');
     document.documentElement.appendChild(el);
     el.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 356)) + 'px';
     el.style.top = (rect.bottom + 12 + 180 > window.innerHeight ? Math.max(8, rect.top - 190) : rect.bottom + 12) + 'px';
@@ -955,9 +966,9 @@
     fetchGlosses(info.word).then((d) => {
       if (popupEl !== el) return;
       el.querySelector('[data-swc-ph]').textContent = d.phonetic ? '/' + d.phonetic + '/' : '';
-      el.querySelector('[data-swc-gloss]').innerHTML = d.glosses.length
+      setHtml(el.querySelector('[data-swc-gloss]'), d.glosses.length
         ? d.glosses.slice(0, 3).map(esc).join('<br>')
-        : '<span style="color:#c0392b">词典没有查到该短语</span>';
+        : '<span style="color:#c0392b">词典没有查到该短语</span>');
       el._glosses = d.glosses;
     });
     el.addEventListener('click', (ev) => ev.stopPropagation());
@@ -1021,7 +1032,7 @@
     el.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483646;width:360px;max-height:70vh;' +
       'display:flex;flex-direction:column;background:#fff;color:#333;border:1px solid #ddd;border-radius:12px;' +
       'box-shadow:0 8px 32px rgba(0,0,0,.2);font:14px/1.5 system-ui,sans-serif;overflow:hidden;';
-    el.innerHTML =
+    setHtml(el,
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f9690e;color:#fff;">' +
       '<b>生词待办</b><span data-swc-count style="font-size:12px;"></span></div>' +
       '<div data-swc-list style="flex:1;overflow:auto;padding:6px 10px;"></div>' +
@@ -1029,7 +1040,7 @@
       '<div style="display:flex;gap:8px;padding:10px 14px;border-top:1px solid #eee;">' +
       '<button data-swc-ingest style="flex:2;padding:7px 0;border:0;border-radius:6px;background:#f9690e;color:#fff;font-size:13px;cursor:pointer;">全部入库</button>' +
       '<button data-swc-clear style="flex:1;padding:7px 0;border:1px solid #ccc;border-radius:6px;background:#fff;color:#888;font-size:13px;cursor:pointer;">清空</button>' +
-      '<button data-swc-close style="padding:7px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#999;font-size:13px;cursor:pointer;">×</button></div>';
+      '<button data-swc-close style="padding:7px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#999;font-size:13px;cursor:pointer;">×</button></div>');
 
     el.querySelector('[data-swc-close]').onclick = () => { el.style.display = 'none'; };
     el.querySelector('[data-swc-clear]').onclick = () => {
@@ -1048,17 +1059,17 @@
     panelEl.querySelector('[data-swc-count]').textContent = queue.length + ' 个词待入库';
     const list = panelEl.querySelector('[data-swc-list]');
     if (!queue.length) {
-      list.innerHTML = '<div style="color:#aaa;text-align:center;padding:30px 0;">队列为空<br>点击页面上高亮的生词即可收录</div>';
+      setHtml(list, '<div style="color:#aaa;text-align:center;padding:30px 0;">队列为空<br>点击页面上高亮的生词即可收录</div>');
       return;
     }
-    list.innerHTML = queue.map((it, i) =>
+    setHtml(list, queue.map((it, i) =>
       '<div style="display:flex;gap:6px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f2f2f2;">' +
       '<div style="flex:1;min-width:0;"><b>' + esc(it.word) + '</b>' +
       '<span style="color:#aaa;font-size:11px;"> ' + esc(it.host) + '</span>' +
       '<div data-swc-sent style="color:#777;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(it.sentence) + '</div></div>' +
       '<button data-swc-edit="' + esc(it.id) + '" title="编辑上下文" style="border:0;background:none;color:#bbb;cursor:pointer;font-size:13px;">✎</button>' +
       '<button data-swc-del="' + esc(it.id) + '" style="border:0;background:none;color:#ccc;cursor:pointer;font-size:14px;">✕</button></div>'
-    ).join('');
+    ).join(''));
     list.querySelectorAll('[data-swc-del]').forEach((b) => {
       b.onclick = () => { removeQueueItem(b.dataset.swcDel); refreshPanel(); updateBadge(); rescan(); };
     });
@@ -1071,11 +1082,11 @@
     const it = queue.find((x) => x.id === id);
     if (!it) return;
     const sentEl = panelEl.querySelector('[data-swc-edit="' + id + '"]').parentElement.querySelector('[data-swc-sent]');
-    sentEl.innerHTML =
+    setHtml(sentEl,
       '<textarea data-swc-ta style="width:100%;box-sizing:border-box;height:64px;font:12px/1.4 system-ui,sans-serif;padding:4px;border:1px solid #ccc;border-radius:4px;resize:vertical;">' + esc(it.sentence) + '</textarea>' +
       '<div style="display:flex;gap:6px;margin-top:4px;">' +
       '<button data-swc-esave style="padding:3px 10px;border:0;border-radius:4px;background:#f9690e;color:#fff;font-size:12px;cursor:pointer;">保存</button>' +
-      '<button data-swc-ecancel style="padding:3px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;color:#888;font-size:12px;cursor:pointer;">取消</button></div>';
+      '<button data-swc-ecancel style="padding:3px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;color:#888;font-size:12px;cursor:pointer;">取消</button></div>');
     const ta = sentEl.querySelector('[data-swc-ta]');
     ta.focus();
     sentEl.querySelector('[data-swc-ecancel]').onclick = refreshPanel;
@@ -1466,7 +1477,7 @@
     const row = (label, id, val, type, extra) =>
       '<div style="margin-bottom:8px;"><label style="display:block;font-size:12px;color:#888;margin-bottom:2px;">' + label + '</label>' +
       '<input id="' + id + '" type="' + (type || 'text') + '" value="' + esc(val) + '" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #ccc;border-radius:6px;font-size:13px;" ' + (extra || '') + '></div>';
-    dlg.innerHTML =
+    setHtml(dlg,
       '<b style="display:block;margin-bottom:10px;">SWC 设置</b>' +
       row('AnkiConnect 地址', 'swc-f-anki', settings.ankiUrl) +
       row('目标 deck', 'swc-f-deck', settings.deckName) +
@@ -1502,7 +1513,7 @@
       row('模型名', 'swc-f-llmmodel', settings.llmModel, 'text', 'placeholder="gpt-4o-mini / glm-4-flash …"') +
       '<div style="display:flex;gap:8px;margin-top:10px;">' +
       '<button data-swc-save style="flex:1;padding:7px 0;border:0;border-radius:6px;background:#f9690e;color:#fff;cursor:pointer;">保存并重扫</button>' +
-      '<button data-swc-cancel style="padding:7px 12px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#888;cursor:pointer;">取消</button></div>';
+      '<button data-swc-cancel style="padding:7px 12px;border:1px solid #ccc;border-radius:6px;background:#fff;color:#888;cursor:pointer;">取消</button></div>');
     document.documentElement.appendChild(dlg);
     const cloudSel = dlg.querySelector('#swc-f-cloud');
     const davBox = dlg.querySelector('[data-swc-dav]');
