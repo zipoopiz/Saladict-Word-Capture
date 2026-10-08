@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.4.1
+// @version      0.4.2
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -933,15 +933,16 @@
     prog.style.display = 'block'; btn.disabled = true; btn.style.opacity = '.6';
     const fail = [];
     const audioFail = [];
-    let ok = 0, dupSkip = 0;
+    let ok = 0, dupSkip = 0, done = 0;
     try {
       await anki('version');
       await ensureAnkiSetup();
       const items = loadQueue().slice();
       for (let n = 0; n < items.length; n++) {
         const it = items[n];
-        if (!loadQueue().some((x) => x.id === it.id)) continue; // 已在其他标签页处理
-        prog.textContent = '入库中 ' + (n + 1) + '/' + items.length + '：' + it.word;
+        if (!loadQueue().some((x) => x.id === it.id)) { done++; continue; } // 已在其他标签页处理
+        // 分子用已完成数：与列表剩余条数（items.length - done）保持一致，避免"5/5 还剩 1 条"的错觉
+        prog.textContent = '入库中 ' + done + '/' + items.length + '：' + it.word;
         try {
           const r = await ingestOne(it);
           ok++;
@@ -949,6 +950,7 @@
           else if (!r) audioFail.push(it.word);
           ingestedIds.add(it.id); saveIngested();
           removeQueueItem(it.id);
+          done++;
           refreshPanel(); updateBadge();
         } catch (err) {
           fail.push(it.word + '（' + err.message + '）');
