@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.5.4
+// @version      0.5.5
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -1042,7 +1042,7 @@
     el.className = 'swc-panel';
     el.dataset.swcUi = '1';
     el.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483646;width:360px;max-height:70vh;' +
-      'display:flex;flex-direction:column;background:#fff;color:#333;border:1px solid #ddd;border-radius:12px;' +
+      'display:none;flex-direction:column;background:#fff;color:#333;border:1px solid #ddd;border-radius:12px;' +
       'box-shadow:0 8px 32px rgba(0,0,0,.2);font:14px/1.5 system-ui,sans-serif;overflow:hidden;';
     setHtml(el,
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f9690e;color:#fff;">' +
