@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.5.5
+// @version      0.5.6
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -937,8 +937,6 @@
     btn.style.cssText = 'position:fixed;z-index:2147483647;background:#f9690e;color:#fff;' +
       'font:12px/1 system-ui,sans-serif;padding:7px 11px;border-radius:7px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.28);';
     btn.onclick = (ev) => { ev.stopPropagation(); showPhrasePopup(rect, info, phrase); closePhraseBtn(); };
-    // 关键：按下时阻止浏览器清除选区，否则 selectionchange 会在 click 之前把本按钮当"选区已取消"移除，点击落空
-    btn.addEventListener('mousedown', (ev) => ev.preventDefault());
     document.documentElement.appendChild(btn);
     const bw = btn.offsetWidth || 90, bh = btn.offsetHeight || 30;
     btn.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - bw / 2, window.innerWidth - bw - 8)) + 'px';
@@ -1005,10 +1003,17 @@
     };
   }
 
-  document.addEventListener('mouseup', (e) => {
+  // 两个监听都必须挂 window 捕获阶段（事件路径第一站）：反复制站点与"解除复制"书签常在 html 捕获层
+  // stopPropagation 掐断整条传播链，挂 document 冒泡层会收不到事件（fanfiction.net 正文页实测失效）
+  window.addEventListener('mouseup', (e) => {
     if (e.target.closest && e.target.closest('[data-swc-ui]')) return;
     setTimeout(checkSelectionForPhrase, 0); // 选区状态在 mouseup 后才落定
-  });
+  }, true);
+  // 按下浮标时阻止浏览器清除选区，否则 selectionchange 会在 click 之前把浮标当"选区已取消"移除，点击落空；
+  // 仅命中浮标自身，不影响弹窗内拖选文字
+  window.addEventListener('mousedown', (e) => {
+    if (e.target.closest && e.target.closest('.swc-phbtn')) e.preventDefault();
+  }, true);
 
   document.addEventListener('selectionchange', () => {
     if (phraseBtnEl) {
