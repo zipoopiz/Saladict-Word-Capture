@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.5.6
+// @version      0.6.0
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -278,7 +278,8 @@
       Title: item.title || '',
       Url: item.url || '',
       Favicon: item.favicon || '',
-      Audio: item.audio || ''
+      Audio: item.audio || '',
+      Picture: item.picture || ''
     };
   }
   // ---- 云备份纯逻辑（WebDAV / S3 兼容） ----
@@ -409,17 +410,17 @@
     // 内嵌的 Saladict Word Cloze 完整模型定义（首次入库时一键创建；背面已含 {{Audio}} 发音行）
   const SWC_MODEL = {
     name: "Saladict Word Cloze",
-    fields: ["Date", "Text", "Translation", "Context", "ContextCloze", "Note", "Title", "Url", "Favicon", "Audio"],
-    css: ".card {\n  font-family: arial;\n  font-size: 20px;\n  text-align: center;\n  color: #333;\n  background-color: white;\n}\n\na {\n  color: #5caf9e;\n}\n\ninput {\n  border: 1px solid #eee;\n}\n\nsection {\n  margin: 1em 0;\n}\n\n.trans {\n  border: 1px solid #eee;\n  padding: 0.5em;\n}\n\n.trans_title {\n  display: block;\n  font-size: 0.9em;\n  font-weight: bold;\n}\n\n.trans_content {\n  margin-bottom: 0.5em;\n}\n\n.cloze {\n  font-weight: bold;\n  color: #f9690e;\n}\n\n.tsource {\n  position: relative;\n  font-size: .8em;\n}\n\n.tsource img {\n  height: .7em;\n}\n\n.tsource a {\n  text-decoration: none;\n}\n\n.typeGood {\n  color: #fff;\n  background: #1EBC61;\n}\n\n.typeBad {\n  color: #fff;\n  background: #F75C4C;\n}\n\n.typeMissed {\n  color: #fff;\n  background: #7C8A99;\n}\n",
-    front: "{{#ContextCloze}}\n<section>{{cloze:ContextCloze}}</section>\n<section>{{type:cloze:ContextCloze}}</section>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{^ContextCloze}}\n<h1>{{Text}}</h1>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{#Note}}\n<section>{{hint:Note}}</section>\n{{/Note}}\n\n{{#Title}}\n<section class=\"tsource\">\n<hr />\n{{#Favicon}}<img src=\"{{Favicon}}\" />{{/Favicon}}\n<a href=\"{{Url}}\">{{Title}}</a>\n</section>\n{{/Title}}\n",
-    back: "{{#Audio}}\n<section>{{Audio}}</section>\n{{/Audio}}\n\n{{#ContextCloze}}\n<section>{{cloze:ContextCloze}}</section>\n<section>{{type:cloze:ContextCloze}}</section>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{^ContextCloze}}\n<h1>{{Text}}</h1>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{#Note}}\n<section>{{Note}}</section>\n{{/Note}}\n\n{{#Title}}\n<section class=\"tsource\">\n<hr />\n{{#Favicon}}<img src=\"{{Favicon}}\" />{{/Favicon}}\n<a href=\"{{Url}}\">{{Title}}</a>\n</section>\n{{/Title}}\n"
+    fields: ["Date", "Text", "Translation", "Context", "ContextCloze", "Note", "Title", "Url", "Favicon", "Audio", "Picture"],
+    css: ".card {\n  font-family: arial;\n  font-size: 20px;\n  text-align: center;\n  color: #333;\n  background-color: white;\n}\n\na {\n  color: #5caf9e;\n}\n\ninput {\n  border: 1px solid #eee;\n}\n\nsection {\n  margin: 1em 0;\n}\n\n.trans {\n  border: 1px solid #eee;\n  padding: 0.5em;\n}\n\n.trans_title {\n  display: block;\n  font-size: 0.9em;\n  font-weight: bold;\n}\n\n.trans_content {\n  margin-bottom: 0.5em;\n}\n\n.cloze {\n  font-weight: bold;\n  color: #f9690e;\n}\n\n.tsource {\n  position: relative;\n  font-size: .8em;\n}\n\n.tsource img {\n  height: .7em;\n}\n\n.tsource a {\n  text-decoration: none;\n}\n\n.typeGood {\n  color: #fff;\n  background: #1EBC61;\n}\n\n.typeBad {\n  color: #fff;\n  background: #F75C4C;\n}\n\n.typeMissed {\n  color: #fff;\n  background: #7C8A99;\n}\n\n.pic img {\n  max-width: 100%;\n  max-height: 180px;\n  border-radius: 6px;\n}\n",
+    front: "{{#Picture}}\n<section class='pic'><img src='{{Picture}}' /></section>\n{{/Picture}}\n\n{{#ContextCloze}}\n<section>{{cloze:ContextCloze}}</section>\n<section>{{type:cloze:ContextCloze}}</section>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{^ContextCloze}}\n<h1>{{Text}}</h1>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{#Note}}\n<section>{{hint:Note}}</section>\n{{/Note}}\n\n{{#Title}}\n<section class=\"tsource\">\n<hr />\n{{#Favicon}}<img src=\"{{Favicon}}\" />{{/Favicon}}\n<a href=\"{{Url}}\">{{Title}}</a>\n</section>\n{{/Title}}\n",
+    back: "{{#Picture}}\n<section class='pic'><img src='{{Picture}}' /></section>\n{{/Picture}}\n\n{{#Audio}}\n<section>{{Audio}}</section>\n{{/Audio}}\n\n{{#ContextCloze}}\n<section>{{cloze:ContextCloze}}</section>\n<section>{{type:cloze:ContextCloze}}</section>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{^ContextCloze}}\n<h1>{{Text}}</h1>\n{{#Translation}}\n<section>{{Translation}}</section>\n{{/Translation}}\n{{/ContextCloze}}\n\n{{#Note}}\n<section>{{Note}}</section>\n{{/Note}}\n\n{{#Title}}\n<section class=\"tsource\">\n<hr />\n{{#Favicon}}<img src=\"{{Favicon}}\" />{{/Favicon}}\n<a href=\"{{Url}}\">{{Title}}</a>\n</section>\n{{/Title}}\n"
   };
 
 //CORE>>
 
   // ===================== GM 工具 =====================
 
-  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue', audioRetry: 'swc_audio_retry', ingested: 'swc_ingested', phrases: 'swc_phrases' };
+  const GMK = { settings: 'swc_settings', known: 'swc_known', saved: 'swc_saved', personal: 'swc_personal', queue: 'swc_queue', audioRetry: 'swc_audio_retry', imgRetry: 'swc_img_retry', ingested: 'swc_ingested', phrases: 'swc_phrases' };
 
   const DEFAULT_SETTINGS = {
     inited: false,
@@ -444,6 +445,7 @@
   let personalUnkSet = new Set(gmGet(GMK.personal, []));
   let queue = gmGet(GMK.queue, []);
   let audioRetryList = gmGet(GMK.audioRetry, []);
+  let imgRetryList = gmGet(GMK.imgRetry, []);
   let ingestedIds = new Set(gmGet(GMK.ingested, [])); // 已成功入库的词条 id 墓碑，防止重复入队/恢复时复活
   let phraseSet = new Set(gmGet(GMK.phrases, [])); // 已入库短语表（规范小写），用于入库后的灰色高亮
 
@@ -486,6 +488,7 @@
     queue = q;
   }
   function saveAudioRetry() { gmSet(GMK.audioRetry, audioRetryList); }
+  function saveImgRetry() { gmSet(GMK.imgRetry, imgRetryList); }
 
   function gmReq(opts) {
     return new Promise((resolve, reject) => {
@@ -540,6 +543,61 @@
       }
     }
     return null;
+  }
+
+  // ===================== 配图（Wikimedia Commons） =====================
+
+  async function fetchImageB64(url) {
+    return bytesToB64(await gmReqBinary(url));
+  }
+
+  // 搜图：Commons 官方 API（免 key、合法热链），一次取 12 张候选的 640px 缩略图
+  async function searchWordImages(word) {
+    const url = 'https://commons.wikimedia.org/w/api.php?action=query&format=json' +
+      '&generator=search&gsrnamespace=6&gsrlimit=12&gsrsearch=' + encodeURIComponent('filetype:bitmap ' + word) +
+      '&prop=imageinfo&iiprop=url|mime&iiurlwidth=640';
+    const d = await gmJSON('GET', url);
+    const pages = (d.query && d.query.pages) || {};
+    return Object.values(pages)
+      .filter((p) => p.imageinfo && p.imageinfo[0] && /image\/(jpeg|png)/.test(p.imageinfo[0].mime || ''))
+      .map((p) => ({ t: p.imageinfo[0].thumburl || p.imageinfo[0].url, d: (p.title || '').replace(/^File:/, '').replace(/\.\w+$/, '') }));
+  }
+
+  function imgFilename(word, url) {
+    const ext = (/\.\w{3,4}(?:\?|$)/.exec(url) || [])[1] || 'jpg';
+    return 'SW_IMG_' + hashStr(String(word).toLowerCase()) + '.' + ext;
+  }
+
+  // 建卡/补图共用：媒体库已有则复用；下载落地失败进待补清单（菜单可补）
+  async function ensureImage(word, url) {
+    const filename = imgFilename(word, url);
+    try { if (await anki('retrieveMediaFile', { filename })) return filename; } catch (e) { /* 动作缺失按未存处理 */ }
+    try {
+      await anki('storeMediaFile', { filename, data: await fetchImageB64(url) });
+      return filename;
+    } catch (e) {
+      if (!imgRetryList.some((x) => x.word === word)) { imgRetryList.push({ word, url, filename }); saveImgRetry(); }
+      return null;
+    }
+  }
+
+  // 存量卡批量补图时无人把关，用 LLM 过滤不适合配图的抽象词；未配 LLM 视为全部适合
+  async function llmImageSuitable(word) {
+    if (!settings.llmBase || !settings.llmKey || !settings.llmModel) return true;
+    try {
+      const r = await gmReq({
+        method: 'POST', url: settings.llmBase.replace(/\/+$/, '') + '/chat/completions', timeout: 30000,
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + settings.llmKey },
+        data: JSON.stringify({ model: settings.llmModel, temperature: 0, messages: [
+          { role: 'system', content: '判断英文单词是否适合用图片辅助记忆：看得见的具体事物（物体/动物/植物/场所/动作）适合，抽象概念、语法功能词、情感词不适合。只返回 JSON：{"suitable":布尔}' },
+          { role: 'user', content: word }
+        ] })
+      });
+      if (r.status >= 300) return true;
+      let content = JSON.parse(r.responseText).choices[0].message.content;
+      content = String(content).replace(/^```(json)?/m, '').replace(/```$/m, '').trim();
+      return JSON.parse(content).suitable !== false;
+    } catch (e) { return true; }
   }
 
   // ===================== 词典与 LLM =====================
@@ -780,6 +838,37 @@
     }
   }
 
+  // 收录浮层里的配图选择器：异步搜图不阻塞收录主流程；点选即定，再点取消，不选也可直接建卡
+  function mountImagePicker(host, word) {
+    const st = { url: '', cands: [], page: 0 };
+    setHtml(host, '<div style="color:#bbb;font-size:12px;padding:2px 0;">配图搜索中…</div>');
+    searchWordImages(word).then((cands) => {
+      if (!host.isConnected) return;
+      st.cands = cands;
+      if (!cands.length) { setHtml(host, ''); return; }
+      const render = () => {
+        const slice = cands.slice(st.page * 6, st.page * 6 + 6);
+        setHtml(host,
+          '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;">' +
+          slice.map((c, i) => '<img data-swc-cand="' + (st.page * 6 + i) + '" src="' + esc(c.t) + '" title="' + esc(c.d) + '" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:2px solid transparent;cursor:pointer;" />').join('') +
+          (cands.length > 6 ? '<button data-swc-imgmore style="width:64px;height:64px;border:1px dashed #ccc;border-radius:6px;background:#fff;color:#999;font-size:12px;cursor:pointer;">换一批</button>' : '') +
+          '</div>');
+        host.querySelectorAll('[data-swc-cand]').forEach((img) => {
+          img.onclick = () => {
+            const c = st.cands[+img.dataset.swcCand];
+            st.url = st.url === c.t ? '' : c.t;
+            host.querySelectorAll('[data-swc-cand]').forEach((m) => { m.style.borderColor = 'transparent'; });
+            if (st.url) img.style.borderColor = '#f9690e';
+          };
+        });
+        const more = host.querySelector('[data-swc-imgmore]');
+        if (more) more.onclick = () => { st.page = (st.page + 1) % Math.ceil(cands.length / 6); render(); };
+      };
+      render();
+    }).catch(() => { if (host.isConnected) setHtml(host, ''); });
+    return st;
+  }
+
   async function showPopup(x, y, info) {
     closePopup();
     const meta = pageMeta();
@@ -801,6 +890,7 @@
       '<span data-swc-ph style="color:#888;font-size:12px;"></span>' +
       (isSaved ? '<span style="color:#999;font-size:12px;">已收藏过</span>' : '') +
       (isKnownWord ? '<span style="color:#999;font-size:12px;">熟词（频率表判定）</span>' : '') + '</div>' +
+      '<div data-swc-img style="margin-bottom:8px;"></div>' +
       '<div data-swc-gloss style="color:#456;font-size:13px;margin-bottom:6px;">查词典中…</div>' +
       '<div style="border-left:3px solid #ffe08a;padding:4px 8px;margin-bottom:10px;font-size:12.5px;color:#555;">' + preview + '</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
@@ -830,6 +920,7 @@
 
     el.addEventListener('click', (ev) => ev.stopPropagation());
     el.querySelector('[data-swc-x]').onclick = closePopup;
+    const imgSt = mountImagePicker(el.querySelector('[data-swc-img]'), info.word);
     const knowBtn = el.querySelector('[data-swc-know]');
     if (knowBtn) knowBtn.onclick = () => {
       genCandidates(info.word).forEach((c) => { knownSet.add(c); personalUnkSet.delete(c); });
@@ -853,7 +944,8 @@
         url: meta.url, title: meta.title, favicon: meta.favicon,
         host: hostOf(meta.url),
         dateAdded: Date.now(),
-        translation: '', note: '', glosses: el._glosses || []
+        translation: '', note: '', glosses: el._glosses || [],
+        imageUrl: imgSt.url
       };
       const res = addQueueItem(item);
       updateBadge();
@@ -1120,13 +1212,61 @@
     };
   }
 
+  // 老模型无痛升级：补 Picture 字段 + 模板图片区（字段追加不破坏卡片；模板仅在内置版或经确认后覆写）
+  // 注意：updateModelTemplates 的 templates 参数是「以模板名为键的对象」，不是数组（传数组会被 AnkiConnect 拒绝）
+  async function ensurePictureField() {
+    const names = await anki('modelFieldNames', { modelName: settings.modelName });
+    let tplName = '', curFront = '';
+    try {
+      const tpls = await anki('modelTemplates', { modelName: settings.modelName }) || {};
+      tplName = Object.keys(tpls)[0] || '';
+      curFront = tplName ? (tpls[tplName].Front || '') : '';
+    } catch (e) { /* 极老版 AnkiConnect 读不到模板时只升级字段 */ }
+    const needField = !names.includes('Picture');
+    const needTpl = !!tplName && !curFront.includes('{{#Picture}}');
+    if (!needField && !needTpl) return;
+    const what = [needField ? 'Picture 字段' : '', needTpl ? '卡片模板图片区' : ''].filter(Boolean).join(' 和 ');
+    if (!confirm('SWC 检测到模型「' + settings.modelName + '」缺少 ' + what + '。\n\n是否自动升级？（已有卡片内容不受影响）')) {
+      throw new Error('已取消 Picture 升级');
+    }
+    if (needField) {
+      try {
+        await anki('modelFieldAdd', { modelName: settings.modelName, fieldName: 'Picture' });
+      } catch (e) {
+        const m = String(e.message || e);
+        // Anki 2.1.50+ 安全锁：模板/字段编辑器或 Browse 开着时禁止 API 写模型
+        throw new Error(/editor/i.test(m) ? 'Anki 编辑器占用中，请关闭模板/字段编辑器和 Browse 窗口后重试（' + m + '）' : m);
+      }
+    }
+    if (needTpl) {
+      const picBlock = "{{#Picture}}\n<section class='pic'><img src='{{Picture}}' /></section>\n{{/Picture}}\n\n";
+      const stockOld = SWC_MODEL.front.startsWith(picBlock) ? SWC_MODEL.front.slice(picBlock.length) : '';
+      const isStock = curFront === SWC_MODEL.front || curFront === stockOld;
+      if (!isStock && !confirm('该模型的卡片模板被自定义过，自动更新会覆盖自定义内容。\n仍要继续？')) return;
+      try {
+        await anki('updateModelTemplates', { model: { name: settings.modelName, templates: { [tplName]: { Front: SWC_MODEL.front, Back: SWC_MODEL.back } } } });
+        try { await anki('saveModelCss', { model: { name: settings.modelName, css: SWC_MODEL.css } }); } catch (e) { /* CSS 仅装饰，失败不提示 */ }
+        toast('模板已更新：卡片将显示 Picture 图片');
+      } catch (e) {
+        const m = String(e.message || e);
+        // 不静默：/editor/ 是 Anki 2.1.50+ 的编辑器安全锁；否则多为 AnkiConnect 过旧缺 updateModelTemplates
+        const hint = /editor/i.test(m)
+          ? '请关闭 Anki 中打开的模板/字段编辑器和 Browse 窗口，再从菜单「初始化 Anki 模型/牌组」重试'
+          : '请升级 Anki 后从菜单「初始化 Anki 模型/牌组」重试';
+        toast('模板自动更新失败（' + m + '）。\n' + hint, 8000);
+      }
+    } else if (needField) {
+      toast('模型已升级：新增 Picture 字段');
+    }
+  }
+
   // 首次入库引导：检测并一键创建缺失的笔记模型/牌组
   async function ensureAnkiSetup() {
     const models = await anki('modelNames');
     const decks = await anki('deckNames');
     const needModel = !models.includes(settings.modelName);
     const needDeck = !decks.includes(settings.deckName);
-    if (!needModel && !needDeck) return true;
+    if (!needModel && !needDeck) { await ensurePictureField(); return true; }
     if (needModel && settings.modelName !== SWC_MODEL.name) {
       throw new Error('笔记模型「' + settings.modelName + '」不存在且不是内置模板名，请在设置里改回「' + SWC_MODEL.name + '」或自行创建该模型');
     }
@@ -1147,6 +1287,7 @@
       });
     }
     if (needDeck) await anki('createDeck', { deck: settings.deckName });
+    await ensurePictureField();
     toast('Anki 初始化完成，继续入库');
     return true;
   }
@@ -1160,6 +1301,7 @@
     prog.style.display = 'block'; btn.disabled = true; btn.style.opacity = '.6';
     const fail = [];
     const audioFail = [];
+    const imgFailBefore = imgRetryList.length;
     let ok = 0, dupSkip = 0, done = 0;
     try {
       await anki('version');
@@ -1197,6 +1339,8 @@
     let msg = ok ? '入库完成：新建 ' + (ok - dupSkip) + ' 张' : '';
     if (dupSkip) msg += (msg ? '，' : '') + '跳过已存在 ' + dupSkip + ' 个';
     if (audioFail.length) msg += '，发音待补 ' + audioFail.length + ' 个（菜单可补）';
+    const imgFail = imgRetryList.length - imgFailBefore;
+    if (imgFail) msg += (msg ? '，' : '') + '配图待补 ' + imgFail + ' 个（菜单可补）';
     if (fail.length) toast(msg ? msg + '；失败 ' + fail.length + '：' + fail.slice(0, 2).join('；') : '失败 ' + fail.length + '：' + fail.slice(0, 2).join('；'), 6000);
     else if (ok) toast(msg, audioFail.length ? 5500 : 2600);
     if (ok) rescan();
@@ -1258,6 +1402,121 @@
     toast('补发音完成 ' + ok + ' 个' + (still.length ? '，仍失败：' + still.join('、') : ''), 4500);
   }
 
+  // ===================== 存量卡批量补图 =====================
+
+  async function setNotePictures(word, filename, overwrite) {
+    const ids = await noteIdsForWord(word);
+    for (const id of ids) {
+      const nfo = (await anki('notesInfo', { notes: [id] }))[0];
+      if (nfo && nfo.fields && nfo.fields.Picture && (overwrite || !nfo.fields.Picture.value)) {
+        await anki('updateNoteFields', { note: { id, fields: { Picture: filename } } });
+      }
+    }
+  }
+
+  async function clearNotePictures(word) {
+    const ids = await noteIdsForWord(word);
+    for (const id of ids) {
+      await anki('updateNoteFields', { note: { id, fields: { Picture: '' } } });
+    }
+  }
+
+  async function repairImages() {
+    if (!imgRetryList.length) { toast('没有待补的配图'); return; }
+    let ok = 0;
+    const still = [];
+    for (const it of imgRetryList) {
+      try {
+        await anki('storeMediaFile', { filename: it.filename, data: await fetchImageB64(it.url) });
+        await setNotePictures(it.word, it.filename, true);
+        ok++;
+      } catch (e) { still.push(it); }
+    }
+    imgRetryList = still; saveImgRetry();
+    toast('补配图完成 ' + ok + ' 个' + (still.length ? '，仍失败 ' + still.length + ' 个' : ''), 4000);
+  }
+
+  let imgReviewEl = null;
+
+  // 批量补图进度窗：实时进度条 + 分类计数 + 可中途取消
+  function buildImgProgress(total) {
+    const el = document.createElement('div');
+    el.dataset.swcUi = '1';
+    el.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483646;width:300px;' +
+      'background:#fff;color:#333;border:1px solid #ddd;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.2);font:14px/1.5 system-ui,sans-serif;padding:12px;';
+    setHtml(el,
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><b>存量卡批量补图</b>' +
+      '<button data-ip-cancel style="border:1px solid #ccc;border-radius:5px;background:#fff;color:#c0392b;font-size:12px;cursor:pointer;padding:2px 10px;">取消</button></div>' +
+      '<div data-ip-count style="font-size:13px;color:#555;">0/' + total + '</div>' +
+      '<div style="height:6px;background:#eee;border-radius:3px;overflow:hidden;margin:4px 0;"><div data-ip-bar style="height:100%;width:0;background:#f9690e;transition:width .2s;"></div></div>' +
+      '<div data-ip-cur style="font-size:12px;color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>' +
+      '<div data-ip-stats style="font-size:12px;color:#888;margin-top:2px;"></div>');
+    document.documentElement.appendChild(el);
+    const st = {
+      cancelled: false,
+      set(done, word, stats) {
+        el.querySelector('[data-ip-count]').textContent = done + '/' + total;
+        el.querySelector('[data-ip-bar]').style.width = (total ? Math.round(done / total * 100) : 100) + '%';
+        el.querySelector('[data-ip-cur]').textContent = word;
+        el.querySelector('[data-ip-stats]').textContent = stats;
+      },
+      close() { el.remove(); }
+    };
+    el.querySelector('[data-ip-cancel]').onclick = () => {
+      st.cancelled = true;
+      const b = el.querySelector('[data-ip-cancel]');
+      b.disabled = true; b.style.opacity = '.5'; b.textContent = '取消中…';
+    };
+    return st;
+  }
+
+  // 存量卡补图：LLM 预筛（可选）→ 每词取首张候选自动配好 → 待确认列表人工核对换图
+  async function backfillImages() {
+    if (imgReviewEl) { imgReviewEl.remove(); imgReviewEl = null; }
+    try {
+      await anki('version');
+      await ensureAnkiSetup();
+    } catch (e) { toast(String(e.message || e), 4500); return; }
+    let ids = [];
+    try { ids = await anki('findNotes', { query: 'note:"' + settings.modelName + '"' }); } catch (e) { /* 查询失败按无卡处理 */ }
+    const seen = new Set();
+    const words = [];
+    for (let i = 0; i < ids.length && words.length < 200; i += 150) {
+      const infos = await anki('notesInfo', { notes: ids.slice(i, i + 150) });
+      for (const nfo of infos) {
+        const f = nfo.fields || {};
+        const w = f.Text && f.Text.value;
+        if (!w || (f.Picture && f.Picture.value)) continue;
+        if (!seen.has(w.toLowerCase())) { seen.add(w.toLowerCase()); words.push(w); }
+      }
+    }
+    if (!words.length) { toast('没有找到缺配图的存量卡'); return; }
+    toast('开始补图：' + words.length + ' 个词，LLM' + (settings.llmBase ? '预筛中' : '未配置，直接取首图'), 3000);
+    const prog = buildImgProgress(words.length);
+    const items = [];
+    let cOk = 0, cSkip = 0, cNone = 0, cErr = 0, done = 0;
+    for (const w of words) {
+      if (prog.cancelled) break;
+      prog.set(done, w, '已配 ' + cOk + ' · 跳过 ' + cSkip + ' · 无图源 ' + cNone + (cErr ? ' · 失败 ' + cErr : ''));
+      try {
+        if (!(await llmImageSuitable(w))) { items.push({ word: w, skipped: true }); cSkip++; }
+        else {
+          const cands = await searchWordImages(w);
+          if (!cands.length) { items.push({ word: w, none: true }); cNone++; }
+          else {
+            const fn = await ensureImage(w, cands[0].t);
+            if (fn) { await setNotePictures(w, fn, true); cOk++; }
+            items.push({ word: w, cands, file: fn || null, page: 0 });
+          }
+        }
+      } catch (e) { items.push({ word: w, err: e.message }); cErr++; }
+      done++;
+    }
+    prog.close();
+    if (prog.cancelled) toast('补图已取消：完成 ' + done + '/' + words.length + '，已处理的词可在下方核对', 4500);
+    showImgReview(items);
+  }
+
   async function ingestOne(it) {
     // Anki 侧幂等：同词同句已建过卡则跳过（历史复活队列项 / 重复点击的最终防线）
     const ctxNorm = (v) => String(v || '').replace(/\s+/g, ' ').trim();
@@ -1290,6 +1549,10 @@
         if (llm.gloss_fits_context === false && llm.gloss_adjusted) it.translation = llm.gloss_adjusted;
       }
     } catch (e) { /* LLM 失败不阻塞入库 */ }
+    if (it.imageUrl) {
+      const pic = await ensureImage(it.word, it.imageUrl);
+      if (pic) it.picture = pic; // 失败已进待补清单，Picture 留空，后续可补
+    }
     it.dateAdded = Date.now();
     const note = {
       deckName: settings.deckName,
@@ -1310,6 +1573,61 @@
     genCandidates(it.word).forEach((c) => savedSet.add(c));
     saveSaved();
     return audioOk;
+  }
+
+  // 补图结果待确认列表：首图可能离谱（多义词/专名），逐张核对可换图可去图
+  function showImgReview(items) {
+    const pending = items.filter((x) => x.cands && x.cands.length);
+    const okN = items.filter((x) => x.file).length;
+    const skipN = items.filter((x) => x.skipped).length;
+    const noneN = items.filter((x) => x.none).length;
+    const errN = items.filter((x) => x.err).length;
+    const el = document.createElement('div');
+    el.dataset.swcUi = '1';
+    el.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483646;width:420px;max-height:75vh;overflow:auto;' +
+      'background:#fff;color:#333;border:1px solid #ddd;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.2);font:14px/1.5 system-ui,sans-serif;padding:12px;';
+    setHtml(el,
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+      '<b>存量卡补图核对</b><button data-ir-close style="border:0;background:none;color:#999;font-size:16px;cursor:pointer;">×</button></div>' +
+      '<div style="color:#777;font-size:12px;margin-bottom:6px;">已配 ' + okN + '，跳过 ' + skipN +
+      '，无图源 ' + noneN + (errN ? '，失败 ' + errN : '') +
+      (pending.length ? '；以下 ' + pending.length + ' 个已用首图，请核对：' : '，无需核对。') + '</div>' +
+      items.map((x, idx) => (!x.cands || !x.cands.length) ? '' :
+        '<div data-ir-row="' + idx + '" style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f2f2f2;">' +
+        '<img src="' + esc(x.cands[x.page].t) + '" style="width:56px;height:56px;object-fit:cover;border-radius:6px;" />' +
+        '<div style="flex:1;min-width:0;"><b>' + esc(x.word) + '</b>' +
+        '<div data-ir-desc style="color:#999;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(x.cands[x.page].d) + '</div></div>' +
+        (x.err ? '<span style="color:#c0392b;font-size:12px;">' + esc(x.err) + '</span>' :
+        '<button data-ir-skip style="border:1px solid #ccc;border-radius:5px;background:#fff;color:#888;font-size:12px;cursor:pointer;padding:3px 8px;">无图</button>' +
+        '<button data-ir-next style="border:1px solid #ccc;border-radius:5px;background:#fff;color:#888;font-size:12px;cursor:pointer;padding:3px 8px;">换图</button>') + '</div>'
+      ).join(''));
+    document.documentElement.appendChild(el);
+    imgReviewEl = el;
+    el.querySelector('[data-ir-close]').onclick = () => { el.remove(); imgReviewEl = null; };
+    items.forEach((x, idx) => {
+      if (!x.cands || !x.cands.length || x.err) return;
+      const row = el.querySelector('[data-ir-row="' + idx + '"]');
+      row.querySelector('[data-ir-skip]').onclick = async () => {
+        try { await clearNotePictures(x.word); row.remove(); } catch (e) { toast('失败：' + e.message, 4000); }
+      };
+      row.querySelector('[data-ir-next]').onclick = async () => {
+        const btn = row.querySelector('[data-ir-next]');
+        btn.disabled = true; btn.style.opacity = '.5';
+        try {
+          x.page = (x.page + 1) % x.cands.length;
+          const c = x.cands[x.page];
+          const fn = await ensureImage(x.word, c.t);
+          if (fn) {
+            await setNotePictures(x.word, fn, true);
+            row.querySelector('img').src = c.t;
+            row.querySelector('[data-ir-desc]').textContent = c.d;
+            x.file = fn;
+          } else toast('下载失败，已进待补清单（菜单可补）', 3500);
+        } catch (e) { toast('失败：' + e.message, 4000); }
+        btn.disabled = false; btn.style.opacity = '';
+      };
+    });
+    if (!pending.length) setTimeout(() => { if (imgReviewEl === el) { el.remove(); imgReviewEl = null; } }, 6000);
   }
 
   // ===================== 云备份（WebDAV / S3 兼容） =====================
@@ -1648,6 +1966,8 @@
     GM_registerMenuCommand('备份词表到云', backupToCloud);
     GM_registerMenuCommand('从云恢复词表（合并）', restoreFromCloud);
     GM_registerMenuCommand('补下载失败的发音', repairAudio);
+    GM_registerMenuCommand('补下载失败的配图', repairImages);
+    GM_registerMenuCommand('存量卡批量补图', backfillImages);
     GM_registerMenuCommand('初始化 Anki 模型/牌组', async () => {
       try { await ensureAnkiSetup(); } catch (e) { toast(String(e.message || e), 4500); }
     });
