@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.7.0
+// @version      0.8.0
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -15,6 +15,7 @@
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @run-at       document-idle
 // @noframes
 // @connect      127.0.0.1
@@ -212,7 +213,14 @@
       .replace(/\s+/g, ' ').replace(/^[^\w]+|[^\w]+$/g, '');
   }
 
-  // 视频卡补全（asbplayer 桥）：在 Context 中定位 Text 生成挖空句，返回 { cloze, matched } 或 null
+  // "1:02:33" / "15:20" / "0:15" -> 秒；非法返回 null（YouTube transcript 时间戳解析）
+function parseTimestamp(s) {
+  const m = /^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return null;
+  return (m[1] ? +m[1] * 3600 : 0) + (+m[2]) * 60 + (+m[3]);
+}
+
+// 视频卡补全（asbplayer 桥）：在 Context 中定位 Text 生成挖空句，返回 { cloze, matched } 或 null
   // ① 原样匹配：词边界+忽略大小写+短语内部空白弹性 → 命中处全部挖空（同一 c1，与 clozeify 惯例一致）
   // ② 单词屈折兜底：Context 逐 token 屈折还原后与 Text 比对（met↔meet、putting↔put、children↔child），
   //    命中的 surface 形式全部挖空——挖的是句子里真实出现的词形，type:cloze 才对得上
@@ -456,6 +464,7 @@
     // 故新卡使用逐字节克隆的真 cloze 模型（见 README）
     modelName: 'Saladict Word Cloze',
     freqCutoff: 8000,
+    ytSeek: true, // YouTube transcript 面板注入 ▶ 点句跳播（菜单可关）
     audioType: 2, // 2=美音 1=英音
     excludeSelector: '', // 匹配元素内的文字不扫描不收录，如 ".xgray, .sidebar"
     llmBase: '', llmKey: '', llmModel: '',
@@ -759,7 +768,7 @@
   let moTimer = null;
   const mo = new MutationObserver(() => {
     if (moTimer) clearTimeout(moTimer);
-    moTimer = setTimeout(() => { moTimer = null; rescan(); }, 1200);
+    moTimer = setTimeout(() => { moTimer = null; rescan(); injectYtSeekButtons(); }, 1200);
   });
 
   function injectCSS() {
@@ -1139,6 +1148,47 @@
       if (!sel || sel.isCollapsed) closePhraseBtn();
     }
   });
+
+  // ===================== YouTube 字幕面板点句跳播 =====================
+
+  // 词级交互（高亮/查词/短语收录）已随主脚本覆盖 transcript 面板（v0.5.3 起适配其 CSP）；
+  // 这里只补 ▶ 点句跳播。播放器 API（#movie_player.seekTo）在页面上下文，隔离 world 碰不到，
+  // 经 unsafeWindow 调用；内联 <script> 注入会被 YouTube 的 CSP+nonce 拦掉，不走那条路。
+  function onYouTube() {
+    return /(^|\.)youtube\.com$/.test(location.hostname);
+  }
+
+  function ytSeekTo(sec) {
+    try {
+      const p = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window)
+        .document.getElementById('movie_player');
+      if (p && typeof p.seekTo === 'function') {
+        p.seekTo(sec, true);
+        if (typeof p.playVideo === 'function') p.playVideo();
+      }
+    } catch (e) { /* 播放器不在（Shorts/内嵌态）时静默 */ }
+  }
+
+  function injectYtSeekButtons() {
+    if (settings.ytSeek === false || !onYouTube()) return;
+    const segs = document.querySelectorAll('ytd-transcript-segment-renderer:not([data-swc-seek])');
+    if (!segs.length) return;
+    segs.forEach((seg) => {
+      seg.dataset.swcSeek = '1'; // 无论成败都标记，避免每次 DOM 变更重试
+      const tsEl = seg.querySelector('.segment-timestamp');
+      const sec = tsEl ? parseTimestamp(tsEl.textContent) : null;
+      if (sec === null) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '▶';
+      btn.title = '跳到此句';
+      btn.dataset.swcUi = '1';
+      btn.style.cssText = 'all:initial;box-sizing:border-box;margin:0 4px 0 0;padding:0 3px;border:0;' +
+        'background:none;color:#f9690e;font:11px/1.2 system-ui,sans-serif;cursor:pointer;';
+      btn.addEventListener('click', (e) => { e.stopPropagation(); ytSeekTo(sec); });
+      (tsEl.parentElement || tsEl).insertBefore(btn, tsEl);
+    });
+  }
 
   // ===================== 队列面板与入库 =====================
 
@@ -2107,6 +2157,12 @@
       if (!panelEl) buildPanel();
       await completeVideoCards();
     });
+    GM_registerMenuCommand('YouTube 点句跳播：' + (settings.ytSeek === false ? '开' : '关'), () => {
+      settings.ytSeek = settings.ytSeek === false; // true->false, false->true
+      saveSettings();
+      toast('YouTube 点句跳播已' + (settings.ytSeek === false ? '关闭' : '开启'));
+      if (settings.ytSeek !== false) injectYtSeekButtons();
+    });
     GM_registerMenuCommand('初始化 Anki 模型/牌组', async () => {
       try { await ensureAnkiSetup(); } catch (e) { toast(String(e.message || e), 4500); }
     });
@@ -2121,6 +2177,7 @@
     registerMenus();
     rescan();
     mo.observe(document.body, { childList: true, subtree: true });
+    injectYtSeekButtons();
     if (!settings.inited) {
       settings.inited = true; saveSettings();
       toast('SWC 已启用：生词高亮→点击收录→右下角徽标一键入库。菜单里可打开设置。', 5000);

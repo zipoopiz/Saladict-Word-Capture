@@ -9,7 +9,7 @@ const src = fs.readFileSync(new URL('../saladict-word-capture.user.js', import.m
 const core = src.split('//<<CORE')[1].split('//CORE>>')[0];
 const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
-  clozeify, buildClozeFromContext, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
+  clozeify, buildClozeFromContext, parseTimestamp, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
   sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr,
   ossPresignV2, isOssHost, bytesToB64, SWC_MODEL, normPhrase, parsePhraseSelection };`)();
 
@@ -328,6 +328,21 @@ t('xmlErr: 无 Code 时原样截断', () => {
   assert.equal(fns.xmlErr('<html>oops</html>'), '<html>oops</html>');
   assert.equal(fns.xmlErr(''), '');
   assert.equal(fns.xmlErr(null), '');
+});
+
+// ---- YouTube 点句跳播 ----
+t('ts: 秒/分/时 三种形态', () => {
+  assert.equal(fns.parseTimestamp('0:15'), 15);
+  assert.equal(fns.parseTimestamp('15:20'), 920);
+  assert.equal(fns.parseTimestamp('1:02:33'), 3753);
+});
+t('ts: 带空白容忍，非法拒绝', () => {
+  assert.equal(fns.parseTimestamp(' 2:05 '), 125);
+  assert.equal(fns.parseTimestamp('1:2'), null);
+  assert.equal(fns.parseTimestamp('12:3:4'), null);
+  assert.equal(fns.parseTimestamp('abc'), null);
+  assert.equal(fns.parseTimestamp(''), null);
+  assert.equal(fns.parseTimestamp(null), null);
 });
 
 // ---- EPUB 阅读页纯逻辑（epub-viewer.html 同款 CORE 抽取） ----
