@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { webcrypto, createHash, createHmac } from 'node:crypto';
+import { parseSrt, renderLyricsHtml } from '../tools/whisper-lyrics.mjs';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto; // Node 18 下的 WebCrypto
 
@@ -352,6 +353,31 @@ t('stats: 三项齐备', () => {
 t('stats: Anki 未连接以 — 占位', () => {
   assert.equal(fns.statsLine(12, 34, null), '熟词 12 · 已收藏 34 · Anki 卡 —');
   assert.equal(fns.statsLine(0, 0, undefined), '熟词 0 · 已收藏 0 · Anki 卡 —');
+});
+
+// ---- whisper 歌词页 ----
+const SRT = '1\r\n00:00:12,300 --> 00:00:15,800\r\nHello world.\r\n\r\n' +
+  '2\n00:01:02,480 --> 00:01:05,000\nSecond line\ncontinues here.\n\n' +
+  'bad block\nno timestamps here\n';
+t('srt: 块解析，毫秒换算，多行合并，坏块跳过', () => {
+  const r = parseSrt(SRT);
+  assert.equal(r.length, 2);
+  assert.equal(r[0].t, 12.3);
+  assert.equal(r[0].text, 'Hello world.');
+  assert.equal(r[1].t, 62.48);
+  assert.equal(r[1].text, 'Second line continues here.');
+});
+t('srt: 空输入', () => {
+  assert.deepEqual(parseSrt(''), []);
+  assert.deepEqual(parseSrt(null), []);
+});
+t('lyrics: 模板含时间戳属性/音频/防抢跳播守卫，文本转义', () => {
+  const html = renderLyricsHtml('Ep <1> "Special"', 'my pod cast.mp3', parseSrt(SRT));
+  assert.ok(html.includes('data-t="12.3"'));
+  assert.ok(html.includes('data-t="62.5"'));
+  assert.ok(html.includes('src="my%20pod%20cast.mp3"'));
+  assert.ok(html.includes('.swc-popup'));
+  assert.ok(html.includes('Ep &lt;1&gt; &quot;Special&quot;'));
 });
 
 // ---- EPUB 阅读页纯逻辑（epub-viewer.html 同款 CORE 抽取） ----
