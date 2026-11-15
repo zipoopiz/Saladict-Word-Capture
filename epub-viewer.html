@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SWC EPUB 阅读器</title>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+<style>
+  body { margin: 0; background: #faf9f7; color: #333; font: 16px/1.8 Georgia, "Songti SC", serif; }
+  header { position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+           padding: 8px 14px; background: #f9690e; color: #fff; font: 13px/1.4 system-ui, sans-serif; }
+  header b { margin-right: 6px; }
+  header button, header select, header input {
+    font: 12px/1.2 system-ui, sans-serif; padding: 4px 8px; border: 1px solid rgba(255,255,255,.4);
+    border-radius: 5px; background: rgba(255,255,255,.15); color: #fff; cursor: pointer; }
+  header input[type=file] { max-width: 220px; }
+  header button:hover { background: rgba(255,255,255,.28); }
+  #content { max-width: 42em; margin: 0 auto; padding: 24px 20px 60vh; }
+  #content img, #content svg, #content video { display: none; } /* 双保险：内文已剥图，防容器级资源残留 */
+  #drop { border: 2px dashed #f9690e; border-radius: 12px; max-width: 42em; margin: 40px auto; padding: 60px 20px;
+          text-align: center; color: #999; font: 14px/1.8 system-ui, sans-serif; }
+  #drop b { color: #f9690e; }
+  #status { font-size: 12px; opacity: .9; }
+</style>
+</head>
+<body>
+<header>
+  <b>📚 SWC EPUB</b>
+  <input type="file" id="file" accept=".epub">
+  <button id="prev">上一章</button>
+  <select id="chapters" style="max-width:260px;"><option>先打开一本 EPUB</option></select>
+  <button id="next">下一章</button>
+  <span id="status"></span>
+</header>
+<div id="drop">把 <b>.epub</b> 拖到这里，或用左上角选择文件。<br>
+要求本页跑在 <b>http://localhost</b> 下（如 <code>python3 -m http.server</code> 后访问本页）——<br>
+油猴脚本不注入 file:// 页面；localhost 页面上 SWC 的高亮/点词收录/入库全链路照常可用。</div>
+<main id="content" style="display:none;"></main>
+
+<script>
+(function () {
+  'use strict';
+
+  //<<CORE
+  // ===== 纯逻辑区（不依赖 DOM/fflate；tests/core.test.mjs 会抽出来跑单元测试） =====
+
+  // 取属性值，双/单引号都支持；找不到返回 ''
+  function attrOf(tag, name) {
+    const m = new RegExp(name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\')').exec(String(tag || ''));
+    return m ? (m[1] !== undefined ? m[1] : m[2]) : '';
+  }
+
+  // META-INF/container.xml -> OPF 路径
+  function parseContainerXml(xml) {
+    const m = /<rootfile\b[^>]*>/i.exec(String(xml || ''));
+    const p = m && attrOf(m[0], 'full-path');
+    return p || null;
+  }
+
+  // OPF -> { spine: [idref...], manifest: { id: { href, mediaType } } }
+  function parseOpfXml(xml) {
+    const s = String(xml || '');
+    const manifest = {};
+    const itemRe = /<item\b[^>]*>/gi;
+    let m;
+    while ((m = itemRe.exec(s)) !== null) {
+      const id = attrOf(m[0], 'id');
+      if (id) manifest[id] = { href: attrOf(m[0], 'href'), mediaType: attrOf(m[0], 'media-type') };
+    }
+    const spine = [];
+    const refRe = /<itemref\b[^>]*>/gi;
+    while ((m = refRe.exec(s)) !== null) {
+      const idref = attrOf(m[0], 'idref');
+      if (idref && manifest[idref]) spine.push(idref); // 只留 manifest 里能解析到的项
+    }
+    return { spine, manifest };
+  }
+
+  // zip 内路径解析：相对 OPF 所在目录，处理 ./ ../ 百分号编码与开头的 /
+  function zipPathResolve(baseDir, href) {
+    const base = baseDir ? baseDir.replace(/\/+$/, '') + '/' : '';
+    let p;
+    try { p = decodeURIComponent(String(href || '').trim()); } catch (e) { p = String(href || '').trim(); }
+    const out = [];
+    for (const seg of (base + p).replace(/^\/+/, '').split('/')) {
+      if (!seg || seg === '.') continue;
+      if (seg === '..') out.pop(); else out.push(seg);
+    }
+    return out.join('/');
+  }
+
+  // 内文清洗：取 body，剥 script/style/link/img（纯文本阅读为主，图片资源解析不在范围）、
+  // 事件属性与 javascript: 协议——保留其余标签结构，SWC 在这些文本节点上照常工作
+  function extractBodyHtml(xhtml) {
+    let s = String(xhtml || '');
+    const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(s);
+    if (body) s = body[1];
+    s = s.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+    s = s.replace(/<(script|style|link|img)\b[^>]*\/?>(?:<\/\1>)?/gi, '');
+    s = s.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    s = s.replace(/javascript:/gi, '');
+    return s;
+  }
+
+  // UTF-8 解码；出现替换符时回退 GB18030（部分中文旧书）
+  function decodeBytes(bytes) {
+    let s = new TextDecoder('utf-8').decode(bytes);
+    if (s.includes('\uFFFD')) {
+      try { s = new TextDecoder('gb18030').decode(bytes); } catch (e) { /* 保底用 utf-8 结果 */ }
+    }
+    return s;
+  }
+  //CORE>>
+
+  // ===================== DOM 接线 =====================
+
+  const $ = (id) => document.getElementById(id);
+  let book = null; // { name, unzipped, opfDir, spine, manifest, chapter }
+  const LS_KEY = 'swc-epub-progress';
+
+  function setStatus(msg) { $('status').textContent = msg || ''; }
+
+  function loadProgress() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function saveProgress() {
+    if (!book) return;
+    const all = loadProgress();
+    all[book.name] = {
+      ch: book.chapter,
+      scroll: Math.round((window.scrollY / Math.max(1, document.body.scrollHeight - window.innerHeight)) * 1000) / 1000
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(all));
+  }
+
+  function renderChapter(idx, restoreScroll) {
+    if (!book) return;
+    book.chapter = Math.max(0, Math.min(idx, book.spine.length - 1));
+    const item = book.manifest[book.spine[book.chapter]];
+    const bytes = book.unzipped[zipPathResolve(book.opfDir, item.href)];
+    $('content').innerHTML = bytes ? extractBodyHtml(decodeBytes(bytes)) : '<p>（本章无可渲染文本）</p>';
+    $('chapters').value = String(book.chapter);
+    setStatus('第 ' + (book.chapter + 1) + ' / ' + book.spine.length + ' 章');
+    if (restoreScroll) {
+      const saved = (loadProgress()[book.name] || {}).scroll || 0;
+      requestAnimationFrame(() => window.scrollTo(0, saved * (document.body.scrollHeight - window.innerHeight)));
+    } else {
+      window.scrollTo(0, 0);
+    }
+    saveProgress();
+  }
+
+  function openEpub(file) {
+    if (!window.fflate || !window.fflate.unzipSync) {
+      alert('fflate 未加载（CDN 不可达？）。本页需要联网加载一次解压库。');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const unzipped = fflate.unzipSync(new Uint8Array(reader.result));
+        const container = decodeBytes(unzipped['META-INF/container.xml'] ||
+          unzipped[Object.keys(unzipped).find((k) => /container\.xml$/i.test(k))] || new Uint8Array());
+        const opfPath = parseContainerXml(container);
+        if (!opfPath || !unzipped[opfPath]) throw new Error('container.xml 里找不到合法的 OPF');
+        const { spine, manifest } = parseOpfXml(decodeBytes(unzipped[opfPath]));
+        if (!spine.length) throw new Error('OPF spine 为空：可能不是文本型 EPUB');
+        book = {
+          name: file.name,
+          unzipped,
+          opfDir: opfPath.split('/').slice(0, -1).join('/'),
+          spine, manifest, chapter: 0
+        };
+        $('chapters').innerHTML = spine.map((id, i) => {
+          const href = manifest[id].href.split('/').pop();
+          return '<option value="' + i + '">' + (i + 1) + '. ' + decodeURIComponent(href).replace(/\.x?html?$/i, '') + '</option>';
+        }).join('');
+        $('drop').style.display = 'none';
+        $('content').style.display = 'block';
+        const saved = loadProgress()[file.name];
+        renderChapter(saved ? saved.ch : 0, !!saved);
+      } catch (e) {
+        alert('打开失败：' + (e.message || e));
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  $('file').addEventListener('change', () => { if ($('file').files[0]) openEpub($('file').files[0]); });
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f && /\.epub$/i.test(f.name)) openEpub(f);
+  });
+  $('prev').addEventListener('click', () => { if (book) renderChapter(book.chapter - 1); });
+  $('next').addEventListener('click', () => { if (book) renderChapter(book.chapter + 1); });
+  $('chapters').addEventListener('change', () => { if (book) renderChapter(+$('chapters').value); });
+  let scrollTimer = null;
+  window.addEventListener('scroll', () => {
+    if (!book) return;
+    if (scrollTimer) clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(saveProgress, 800);
+  });
+  window.addEventListener('beforeunload', saveProgress);
+})();
+</script>
+</body>
+</html>

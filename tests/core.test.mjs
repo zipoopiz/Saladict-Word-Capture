@@ -330,6 +330,57 @@ t('xmlErr: 无 Code 时原样截断', () => {
   assert.equal(fns.xmlErr(null), '');
 });
 
+// ---- EPUB 阅读页纯逻辑（epub-viewer.html 同款 CORE 抽取） ----
+const epubCore = fs.readFileSync(new URL('../epub-viewer.html', import.meta.url), 'utf8')
+  .split('//<<CORE')[1].split('//CORE>>')[0];
+const ev = new Function(epubCore + `
+return { parseContainerXml, parseOpfXml, zipPathResolve, extractBodyHtml, decodeBytes, attrOf };`)();
+
+t('epub: container.xml 提取 OPF 路径', () => {
+  const xml = '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">' +
+    '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>';
+  assert.equal(ev.parseContainerXml(xml), 'OEBPS/content.opf');
+  assert.equal(ev.parseContainerXml('<rootfiles/>'), null);
+});
+t('epub: OPF 解析 manifest+spine，顺序保留', () => {
+  const opf = '<?xml version="1.0"?><package>' +
+    '<manifest>' +
+    '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>' +
+    '<item id="c1" href="text/chapter1.xhtml" media-type="application/xhtml+xml"/>' +
+    '<item id="c2" href="text/chapter%20two.xhtml" media-type="application/xhtml+xml"/>' +
+    '</manifest>' +
+    '<spine toc="ncx"><itemref idref="c1"/><itemref idref="c2"/></spine></package>';
+  const r = ev.parseOpfXml(opf);
+  assert.deepEqual(r.spine, ['c1', 'c2']);
+  assert.equal(r.manifest.c1.href, 'text/chapter1.xhtml');
+  assert.equal(r.manifest.c2.mediaType, 'application/xhtml+xml');
+  assert.equal(ev.parseOpfXml('<package/>').spine.length, 0);
+});
+t('epub: zip 路径解析（相对/向上/百分号编码）', () => {
+  assert.equal(ev.zipPathResolve('OEBPS/text', 'chapter1.xhtml'), 'OEBPS/text/chapter1.xhtml');
+  assert.equal(ev.zipPathResolve('OEBPS/text', '../styles/main.css'), 'OEBPS/styles/main.css');
+  assert.equal(ev.zipPathResolve('', 'a/b%20c.xhtml'), 'a/b c.xhtml');
+  assert.equal(ev.zipPathResolve('OEBPS', './x.xhtml'), 'OEBPS/x.xhtml');
+  assert.equal(ev.zipPathResolve('', '/root.xhtml'), 'root.xhtml');
+});
+t('epub: 内文清洗——剥 script/style/link/img 与事件属性', () => {
+  const x = '<html><head><style>p{}</style></head><body>' +
+    '<h1>Hi</h1><script>alert(1)</script><img src="a.png" onclick="x()"/>' +
+    '<p onmouseover="y()" style="color:red">Text with <a href="javascript:evil()">link</a> and <a href="https://ok.example">ok</a>.</p>' +
+    '</body></html>';
+  const out = ev.extractBodyHtml(x);
+  assert.ok(out.includes('<h1>Hi</h1>'));
+  assert.ok(!out.includes('script'));
+  assert.ok(!out.includes('img'));
+  assert.ok(!out.includes('onclick'));
+  assert.ok(!out.includes('javascript:'));
+  assert.ok(out.includes('https://ok.example'));
+});
+t('epub: UTF-8 优先，损坏回退 GB18030', () => {
+  assert.equal(ev.decodeBytes(new TextEncoder().encode('中文正文')), '中文正文');
+  assert.equal(ev.decodeBytes(new Uint8Array([0xd6, 0xd0, 0xce, 0xc4])), '中文'); // GBK 字节
+});
+
 // ---- AWS V2 签名（OSS 主用） ----
 t('isOssHost: 识别 OSS 虚拟主机/路径式/加速端点', () => {
   assert.ok(fns.isOssHost('mybk.oss-cn-hangzhou.aliyuncs.com'));
