@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.8.1
+// @version      0.8.2
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -214,17 +214,17 @@
   }
 
   // "1:02:33" / "15:20" / "0:15" -> 秒；非法返回 null（YouTube transcript 时间戳解析）
-function parseTimestamp(s) {
-  const m = /^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/.exec(String(s == null ? '' : s).trim());
-  if (!m) return null;
-  return (m[1] ? +m[1] * 3600 : 0) + (+m[2]) * 60 + (+m[3]);
-}
+  function parseTimestamp(s) {
+    const m = /^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/.exec(String(s == null ? '' : s).trim());
+    if (!m) return null;
+    return (m[1] ? +m[1] * 3600 : 0) + (+m[2]) * 60 + (+m[3]);
+  }
 
-// 面板统计行：Anki 卡数未取到（未连接）时以 — 占位
-function statsLine(knownN, savedN, ankiN) {
-  return '熟词 ' + knownN + ' · 已收藏 ' + savedN + ' · Anki 卡 ' +
-    (ankiN === null || ankiN === undefined ? '—' : ankiN);
-}
+  // 面板统计行：Anki 卡数未取到（未连接）时以 — 占位
+  function statsLine(knownN, savedN, ankiN) {
+    return '熟词 ' + knownN + ' · 已收藏 ' + savedN + ' · Anki 卡 ' +
+      (ankiN === null || ankiN === undefined ? '—' : ankiN);
+  }
 
 // 视频卡补全（asbplayer 桥）：在 Context 中定位 Text 生成挖空句，返回 { cloze, matched } 或 null
   // ① 原样匹配：词边界+忽略大小写+短语内部空白弹性 → 命中处全部挖空（同一 c1，与 clozeify 惯例一致）
@@ -1176,7 +1176,14 @@ function statsLine(knownN, savedN, ankiN) {
   }
 
   function injectYtSeekButtons() {
-    if (settings.ytSeek === false || !onYouTube()) return;
+    if (!onYouTube()) return;
+    if (settings.ytSeek === false) { // 关闭态：连已注入的 ▶ 一起撤，开关即时生效
+      document.querySelectorAll('[data-swc-seek]').forEach((seg) => {
+        seg.querySelectorAll('[data-swc-seekbtn]').forEach((b) => b.remove());
+        delete seg.dataset.swcSeek;
+      });
+      return;
+    }
     const segs = document.querySelectorAll('ytd-transcript-segment-renderer:not([data-swc-seek])');
     if (!segs.length) return;
     segs.forEach((seg) => {
@@ -1189,6 +1196,7 @@ function statsLine(knownN, savedN, ankiN) {
       btn.textContent = '▶';
       btn.title = '跳到此句';
       btn.dataset.swcUi = '1';
+      btn.dataset.swcSeekbtn = '1';
       btn.style.cssText = 'all:initial;box-sizing:border-box;margin:0 4px 0 0;padding:0 3px;border:0;' +
         'background:none;color:#f9690e;font:11px/1.2 system-ui,sans-serif;cursor:pointer;';
       btn.addEventListener('click', (e) => { e.stopPropagation(); ytSeekTo(sec); });
@@ -1250,12 +1258,18 @@ function statsLine(knownN, savedN, ankiN) {
     return el;
   }
 
+  // 统计行刷新：known/saved 本地即得，Anki 卡数由 refreshBridgeStatus 异步回填
+  function refreshStatsLine() {
+    if (!panelEl) return;
+    const statsEl = panelEl.querySelector('[data-swc-stats]');
+    if (statsEl) statsEl.textContent = statsLine(knownSet.size, savedSet.size, ankiCardCount);
+  }
+
   function refreshPanel() {
     if (!panelEl) return;
     loadQueue();
     panelEl.querySelector('[data-swc-count]').textContent = queue.length + ' 个词待入库';
-    const statsEl = panelEl.querySelector('[data-swc-stats]');
-    if (statsEl) statsEl.textContent = statsLine(knownSet.size, savedSet.size, ankiCardCount);
+    refreshStatsLine();
     const list = panelEl.querySelector('[data-swc-list]');
     if (!queue.length) {
       setHtml(list, '<div style="color:#aaa;text-align:center;padding:30px 0;">队列为空<br>点击页面上高亮的生词即可收录</div>');
@@ -1754,8 +1768,7 @@ function statsLine(knownN, savedN, ankiN) {
       if (btn) btn.style.display = 'none';
       ankiCardCount = null;
     }
-    const statsEl = panelEl.querySelector('[data-swc-stats]');
-    if (statsEl) statsEl.textContent = statsLine(knownSet.size, savedSet.size, ankiCardCount);
+    refreshStatsLine();
   }
 
   async function completeVideoCards() {

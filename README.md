@@ -7,7 +7,10 @@
 | 文件 | 说明 |
 |---|---|
 | `saladict-word-capture.user.js` | 油猴脚本本体（词表已内嵌，无需其他依赖） |
-| `tests/core.test.mjs` | 核心逻辑单元测试（30 用例）：`node tests/core.test.mjs` |
+| `epub-viewer.html` | 本地 EPUB 阅读页（见下方「周边能力」） |
+| `tools/whisper-lyrics.mjs` | 播客/有声书 → 歌词页生成 CLI（见下方「周边能力」） |
+| `CONTEXT.md` / `.scratch/` | 架构决策与路线图 ticket（面向后续开发会话） |
+| `tests/core.test.mjs` | 核心逻辑单元测试：`node tests/core.test.mjs` |
 | `coca10k.json` | COCA 高频词表源文件（已内嵌进脚本，仅留档，可删） |
 
 ## 安装
@@ -78,6 +81,13 @@
 **日常操作**：挖完矿后打开任意网页 → 📚 面板显示「待补全视频卡 N 张」→ 点【补全视频卡】（或油猴菜单同名项）。脚本自动：在 Context 里定位 Text 生成挖空（支持屈折兜底：Text=meet 能挖中句中的 met）、补词典义、LLM 句翻（已配置时）、Audio 为空补有道 TTS。媒体字段全程只读。
 
 定位失败的卡（句中实在找不到该词形）进失败清单提示，去 Anki 浏览器手动改或重试即可——查询条件 `ContextCloze:""` 只捞半成品，重跑无副作用。补全的词自动进「已收藏」表，网页阅读时灰底。
+
+## 周边能力
+
+- **YouTube 点句跳播**：transcript 面板每句时间戳前注入 ▶，点击跳句播放（走播放器原生 API，同步精度高于 LingQ 的转写对齐）；词级查词/短语收录不受影响；油猴菜单可开关，关闭即时撤除
+- **本地 EPUB**：把仓库里的 `epub-viewer.html` 挂在 http://localhost 静态服务下打开（如 `python3 -m http.server`），拖入 .epub——内容渲染到顶层 DOM，高亮/点词收录/入库全链路照常；章节导航 + 进度记忆（file:// 不行，油猴不注入）
+- **播客/有声书**：`node tools/whisper-lyrics.mjs <audio>` 生成带时间戳的歌词页（有现成字幕用 `--srt x.srt` 跳过转写），音频放同目录、localhost 打开，点句跳播；SWC 在歌词页上照常工作
+- **面板统计**：📚 面板顶部显示「熟词 N · 已收藏 M · Anki 卡 K」
 
 ## 数据与隐私
 

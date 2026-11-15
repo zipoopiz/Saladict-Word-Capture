@@ -1,6 +1,7 @@
 # 001 YouTube 字幕面板点句跳播
 
-**状态**：待开工
+**状态**：已实现（v0.8.0）
+**实现备注（回写）**：seek 走 `unsafeWindow` 直调页面上下文播放器（ticket 原文的 script 注入/postMessage 会被 YouTube CSP+nonce 拦截，功能等效替代）；菜单开关为即时生效——关闭时连已注入的 ▶ 一起从 DOM 撤除。
 **阻塞**：无
 
 ## 背景

@@ -16,7 +16,7 @@
   header input[type=file] { max-width: 220px; }
   header button:hover { background: rgba(255,255,255,.28); }
   #content { max-width: 42em; margin: 0 auto; padding: 24px 20px 60vh; }
-  #content img, #content svg, #content video { display: none; } /* 双保险：内文已剥图，防容器级资源残留 */
+  #content img, #content svg, #content video, #content iframe, #content object, #content embed { display: none; } /* 双保险：内文已剥媒体/嵌入元素，防容器级残留 */
   #drop { border: 2px dashed #f9690e; border-radius: 12px; max-width: 42em; margin: 40px auto; padding: 60px 20px;
           text-align: center; color: #999; font: 14px/1.8 system-ui, sans-serif; }
   #drop b { color: #f9690e; }
@@ -95,10 +95,11 @@
     let s = String(xhtml || '');
     const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(s);
     if (body) s = body[1];
-    s = s.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
-    s = s.replace(/<(script|style|link|img)\b[^>]*\/?>(?:<\/\1>)?/gi, '');
+    s = s.replace(/<(script|style|iframe|object|embed)\b[^>]*>[\s\S]*?<\/\1>/gi, ''); // 配对容器连内容一起剥
+    s = s.replace(/<(script|style|link|img|iframe|object|embed)\b[^>]*\/?>(?:<\/\1>)?/gi, '');
     s = s.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-    s = s.replace(/javascript:/gi, '');
+    // javascript: 只清链接属性值，不碰正文文本
+    s = s.replace(/\s(href|src|action)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, ' $1="#"');
     return s;
   }
 

@@ -426,6 +426,21 @@ t('epub: 内文清洗——剥 script/style/link/img 与事件属性', () => {
   assert.ok(!out.includes('javascript:'));
   assert.ok(out.includes('https://ok.example'));
 });
+t('epub: 剥 iframe/object/embed（连内容），href javascript: 清为占位', () => {
+  const x = '<body><p>learn scripting basics</p>' +
+    '<iframe srcdoc="<p>evil</p>"></iframe><object data="x.swf"></object><embed src="y.swf">' +
+    '<a href="javascript:evil()">click</a></body>';
+  const out = ev.extractBodyHtml(x);
+  assert.ok(out.includes('learn scripting basics'));
+  assert.ok(!out.includes('iframe'));
+  assert.ok(!out.includes('object'));
+  assert.ok(!out.includes('embed'));
+  assert.ok(!out.includes('javascript:'));
+});
+t('epub: 正文文本里的 javascript: 字样不受清洗', () => {
+  const out = ev.extractBodyHtml('<body><p>learn javascript: basics</p></body>');
+  assert.ok(out.includes('learn javascript: basics'));
+});
 t('epub: UTF-8 优先，损坏回退 GB18030', () => {
   assert.equal(ev.decodeBytes(new TextEncoder().encode('中文正文')), '中文正文');
   assert.equal(ev.decodeBytes(new Uint8Array([0xd6, 0xd0, 0xce, 0xc4])), '中文'); // GBK 字节
