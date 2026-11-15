@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.6.0
+// @version      0.7.0
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -210,6 +210,32 @@
   function normPhrase(word) {
     return String(word || '').replace(/’/g, "'").trim().toLowerCase()
       .replace(/\s+/g, ' ').replace(/^[^\w]+|[^\w]+$/g, '');
+  }
+
+  // 视频卡补全（asbplayer 桥）：在 Context 中定位 Text 生成挖空句，返回 { cloze, matched } 或 null
+  // ① 原样匹配：词边界+忽略大小写+短语内部空白弹性 → 命中处全部挖空（同一 c1，与 clozeify 惯例一致）
+  // ② 单词屈折兜底：Context 逐 token 屈折还原后与 Text 比对（met↔meet、putting↔put、children↔child），
+  //    命中的 surface 形式全部挖空——挖的是句子里真实出现的词形，type:cloze 才对得上
+  // 短语不走 ②（词形组合爆炸），失败返回 null 进人工清单
+  function buildClozeFromContext(context, text) {
+    const ctx = String(context || '').trim();
+    const t = normPhrase(text);
+    if (!ctx || !t) return null;
+    const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const reA = new RegExp('\\b' + t.split(' ').map(esc).join('\\s+') + '\\b', 'gi');
+    const clozeA = ctx.replace(reA, (m) => '{{c1::' + m + '}}');
+    if (clozeA !== ctx) return { cloze: clozeA, matched: t };
+    if (!t.includes(' ')) {
+      const re = /[A-Za-z][A-Za-z'’]*/g;
+      let m;
+      while ((m = re.exec(ctx)) !== null) {
+        if (genCandidates(m[0]).some((c) => normPhrase(c) === t)) {
+          const reS = new RegExp('\\b' + esc(m[0]) + '\\b', 'gi');
+          return { cloze: ctx.replace(reS, (w) => '{{c1::' + w + '}}'), matched: m[0] };
+        }
+      }
+    }
+    return null;
   }
   // 划词选区 -> 有效短语；严格 2-5 个连续英文词（内部只许空白，逗号句号等一律拒绝），选区剥首尾标点后须整体匹配
   function parsePhraseSelection(selText) {
@@ -1146,6 +1172,9 @@
       '<b>生词待办</b><span data-swc-count style="font-size:12px;"></span></div>' +
       '<div data-swc-list style="flex:1;overflow:auto;padding:6px 10px;"></div>' +
       '<div data-swc-progress style="display:none;padding:4px 14px;font-size:12px;color:#888;"></div>' +
+      '<div data-swc-bridge style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid #eee;font-size:12px;color:#888;">' +
+      '<span data-swc-bridge-count>视频卡检查中…</span>' +
+      '<button data-swc-bridge-go style="margin-left:auto;display:none;padding:4px 10px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#f9690e;font-size:12px;cursor:pointer;">补全视频卡</button></div>' +
       '<div style="display:flex;gap:8px;padding:10px 14px;border-top:1px solid #eee;">' +
       '<button data-swc-ingest style="flex:2;padding:7px 0;border:0;border-radius:6px;background:#f9690e;color:#fff;font-size:13px;cursor:pointer;">全部入库</button>' +
       '<button data-swc-clear style="flex:1;padding:7px 0;border:1px solid #ccc;border-radius:6px;background:#fff;color:#888;font-size:13px;cursor:pointer;">清空</button>' +
@@ -1157,6 +1186,7 @@
       queue = []; saveQueue(); refreshPanel(); updateBadge(); rescan();
     };
     el.querySelector('[data-swc-ingest]').onclick = ingestAll;
+    el.querySelector('[data-swc-bridge-go]').onclick = completeVideoCards;
     panelEl = el;
     document.documentElement.appendChild(el);
     return el;
@@ -1630,6 +1660,110 @@
     if (!pending.length) setTimeout(() => { if (imgReviewEl === el) { el.remove(); imgReviewEl = null; } }, 6000);
   }
 
+  // ===================== 视频卡补全（asbplayer 桥） =====================
+
+  // asbplayer 挖矿落下的半成品卡：Audio/Picture/Title/Url 已写好，ContextCloze/Translation/Note 为空。
+  // 这里只补文字字段，媒体字段全程只读；查询 ContextCloze:"" 只捞半成品卡，天然幂等。
+  let completing = false;
+
+  async function fetchHalfCards() {
+    const ids = await anki('findNotes', { query: 'note:"' + settings.modelName + '" ContextCloze:""' });
+    const out = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const infos = await anki('notesInfo', { notes: ids.slice(i, i + 50) });
+      infos.forEach((n) => { if (n && n.fields && n.fields.Text && n.fields.Context) out.push(n); });
+    }
+    return out;
+  }
+
+  // 面板打开时顺手查一次待补全数；失败静默（面板其余功能不受影响）
+  async function refreshBridgeStatus() {
+    if (!panelEl) return;
+    const el = panelEl.querySelector('[data-swc-bridge-count]');
+    const btn = panelEl.querySelector('[data-swc-bridge-go]');
+    if (!el) return;
+    try {
+      const ids = await anki('findNotes', { query: 'note:"' + settings.modelName + '" ContextCloze:""' });
+      el.textContent = ids.length ? '待补全视频卡 ' + ids.length + ' 张' : '无待补全视频卡';
+      if (btn) btn.style.display = ids.length ? '' : 'none';
+    } catch (e) {
+      el.textContent = 'Anki 未连接';
+      if (btn) btn.style.display = 'none';
+    }
+  }
+
+  async function completeVideoCards() {
+    if (completing) return;
+    completing = true;
+    const prog = panelEl && panelEl.querySelector('[data-swc-progress]');
+    const btn = panelEl && panelEl.querySelector('[data-swc-bridge-go]');
+    if (prog) prog.style.display = 'block';
+    if (btn) { btn.disabled = true; btn.style.opacity = '.6'; }
+    let ok = 0;
+    const fail = [];
+    try {
+      const notes = await fetchHalfCards();
+      if (!notes.length) toast('没有待补全的视频卡');
+      for (let n = 0; n < notes.length; n++) {
+        const nfo = notes[n];
+        const fv = (k) => String((nfo.fields[k] && nfo.fields[k].value) || '').trim();
+        const word = fv('Text');
+        const context = fv('Context');
+        if (prog) prog.textContent = '补全中 ' + n + '/' + notes.length + '：' + word;
+        try {
+          const hit = buildClozeFromContext(context, word);
+          if (!hit) { fail.push(word + '（正文中未定位到该词）'); continue; }
+          const fields = { ContextCloze: hit.cloze };
+          // 词典义/句翻按需补：半成品卡这两个字段一般都空，已有值则不覆盖
+          const llmOn = settings.llmBase && settings.llmKey && settings.llmModel;
+          let glosses = [];
+          if (!fv('Translation') || (!fv('Note') && llmOn)) glosses = (await fetchGlosses(word)).glosses;
+          if (!fv('Translation') && glosses.length) fields.Translation = glosses.slice(0, 2).join('<br>');
+          if (!fv('Note')) {
+            try {
+              const llm = await llmRefine(word, context, glosses);
+              if (llm) {
+                fields.Note = llm.sentence_translation || '';
+                if (llm.gloss_fits_context === false && llm.gloss_adjusted && fields.Translation) {
+                  fields.Translation = llm.gloss_adjusted;
+                }
+              }
+            } catch (e) { /* LLM 失败不阻塞补全 */ }
+          }
+          // 发音兜底：asbplayer 没导出音频时补有道 TTS（与 fetchAudioB64 的小写化/降级策略一致）
+          if (!fv('Audio').includes('[sound:')) {
+            const filename = safeFilename(word);
+            const b64 = await fetchAudioB64(word);
+            if (b64) {
+              await anki('storeMediaFile', { filename, data: b64 });
+              fields.Audio = '[sound:' + filename + ']';
+            } else if (!audioRetryList.some((x) => x.word === word)) {
+              audioRetryList.push({ word, filename });
+              saveAudioRetry();
+            }
+          }
+          await anki('updateNoteFields', { note: { id: nfo.noteId, fields } });
+          genCandidates(word).forEach((c) => savedSet.add(c));
+          ok++;
+        } catch (err) {
+          fail.push(word + '（' + (err.message || err) + '）');
+        }
+      }
+      saveSaved(); rescan(); refreshBridgeStatus();
+      let msg = ok ? '补全完成：' + ok + ' 张' : '';
+      if (fail.length) msg += (msg ? '，' : '') + '失败 ' + fail.length + '：' + fail.slice(0, 2).join('；');
+      if (msg) toast(msg, fail.length ? 6000 : 3000);
+    } catch (err) {
+      const m = String(err.message || err);
+      const prefix = /timeout|network error|HTTP \d/.test(m) ? '连不上 AnkiConnect：' : '补全失败：';
+      toast(prefix + m, 5000);
+    } finally {
+      if (prog) prog.style.display = 'none';
+      if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+      completing = false;
+    }
+  }
+
   // ===================== 云备份（WebDAV / S3 兼容） =====================
 
   const BACKUP_FILE = 'swc-backup.json';
@@ -1947,6 +2081,7 @@
       if (!panelEl) buildPanel();
       panelEl.style.display = panelEl.style.display === 'none' ? 'flex' : 'none';
       refreshPanel();
+      refreshBridgeStatus();
     };
     document.documentElement.appendChild(badgeEl);
   }
@@ -1954,7 +2089,7 @@
   function registerMenus() {
     GM_registerMenuCommand('生词面板', () => {
       if (!panelEl) buildPanel();
-      panelEl.style.display = 'flex'; refreshPanel();
+      panelEl.style.display = 'flex'; refreshPanel(); refreshBridgeStatus();
     });
     GM_registerMenuCommand('设置', showSettings);
     GM_registerMenuCommand('重新同步 Anki 已收藏词', async () => {
@@ -1968,6 +2103,10 @@
     GM_registerMenuCommand('补下载失败的发音', repairAudio);
     GM_registerMenuCommand('补下载失败的配图', repairImages);
     GM_registerMenuCommand('存量卡批量补图', backfillImages);
+    GM_registerMenuCommand('补全视频卡', async () => {
+      if (!panelEl) buildPanel();
+      await completeVideoCards();
+    });
     GM_registerMenuCommand('初始化 Anki 模型/牌组', async () => {
       try { await ensureAnkiSetup(); } catch (e) { toast(String(e.message || e), 4500); }
     });

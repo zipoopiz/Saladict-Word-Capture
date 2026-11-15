@@ -9,7 +9,7 @@ const src = fs.readFileSync(new URL('../saladict-word-capture.user.js', import.m
 const core = src.split('//<<CORE')[1].split('//CORE>>')[0];
 const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
-  clozeify, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
+  clozeify, buildClozeFromContext, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
   sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr,
   ossPresignV2, isOssHost, bytesToB64, SWC_MODEL, normPhrase, parsePhraseSelection };`)();
 
@@ -239,7 +239,7 @@ t('buildNoteFields: 惯例与字段完整性', () => {
   assert.equal(f.ContextCloze, 'He is an {{c1::amateur}}.');
   assert.equal(f.Url, 'https://example.com/a#frag');
   assert.deepEqual(Object.keys(f), ['Date', 'Text', 'Translation', 'Context', 'ContextCloze',
-    'Note', 'Title', 'Url', 'Favicon', 'Audio']); // 字段顺序与模型一致
+    'Note', 'Title', 'Url', 'Favicon', 'Audio', 'Picture']); // 字段顺序与模型一致
 });
 t('safeFilename: 非法字符替换', () => {
   assert.equal(fns.safeFilename("don't"), 'SW_don_t.mp3');
@@ -375,13 +375,52 @@ t('bytesToB64: 分块转换与 Buffer 一致', () => {
   assert.equal(fns.bytesToB64(big), Buffer.from(big).toString('base64'));
 });
 
+// ---- 视频卡补全（asbplayer 桥）----
+t('bridge: 原样定位，同句多处全挖空', () => {
+  const r = fns.buildClozeFromContext('He ran, and ran fast.', 'ran');
+  assert.equal(r.cloze, 'He {{c1::ran}}, and {{c1::ran}} fast.');
+  assert.equal(r.matched, 'ran');
+});
+t('bridge: 忽略大小写且保留句中大小写', () => {
+  const r = fns.buildClozeFromContext('Poisonous mushrooms.', 'poisonous');
+  assert.equal(r.cloze, '{{c1::Poisonous}} mushrooms.');
+});
+t('bridge: 短语跨空白弹性', () => {
+  const r = fns.buildClozeFromContext('They put  off the trip.', 'put off');
+  assert.equal(r.cloze, 'They {{c1::put  off}} the trip.');
+});
+t('bridge: 屈折兜底 met -> meet，挖句中真实词形', () => {
+  const r = fns.buildClozeFromContext('I met him yesterday.', 'meet');
+  assert.equal(r.cloze, 'I {{c1::met}} him yesterday.');
+  assert.equal(r.matched, 'met');
+});
+t('bridge: 屈折兜底 putting -> put', () => {
+  const r = fns.buildClozeFromContext('He is putting off the meeting.', 'put');
+  assert.equal(r.cloze, 'He is {{c1::putting}} off the meeting.');
+});
+t('bridge: 屈折兜底不规则变形 children -> child', () => {
+  const r = fns.buildClozeFromContext('Children like it.', 'child');
+  assert.equal(r.cloze, '{{c1::Children}} like it.');
+});
+t('bridge: 词边界不误伤（cat≠category）', () => {
+  assert.equal(fns.buildClozeFromContext('The category is new.', 'cat'), null);
+});
+t('bridge: 短语屈折不兜底，进人工清单', () => {
+  assert.equal(fns.buildClozeFromContext('She is putting it off.', 'put off'), null);
+});
+t('bridge: 找不到/空输入返回 null', () => {
+  assert.equal(fns.buildClozeFromContext('Nothing relevant here.', 'xylophone'), null);
+  assert.equal(fns.buildClozeFromContext('', 'x'), null);
+  assert.equal(fns.buildClozeFromContext('ctx', ''), null);
+});
+
 // ---- 内嵌模型定义（首次入库一键创建用） ----
 t('SWC_MODEL: 字段与 buildNoteFields 输出顺序一致', () => {
   const f = fns.buildNoteFields({ word: 'x', dateAdded: 1 });
   assert.deepEqual(fns.SWC_MODEL.fields, Object.keys(f));
 });
-t('SWC_MODEL: 背面模板自带发音行且无大括号笔误', () => {
-  assert.ok(fns.SWC_MODEL.back.startsWith('{{#Audio}}'));
+t('SWC_MODEL: 背面模板顶部图片区+发音行且无大括号笔误', () => {
+  assert.ok(fns.SWC_MODEL.back.startsWith('{{#Picture}}')); // v0.6.0 配图：图片区在模板顶部
   assert.ok(fns.SWC_MODEL.back.includes('{{Audio}}'));
   assert.ok(fns.SWC_MODEL.back.includes('{{type:cloze:ContextCloze}}'));
   assert.ok(!fns.SWC_MODEL.back.includes('{{{{'));
