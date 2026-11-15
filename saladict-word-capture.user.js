@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Saladict Word Capture（生词高亮→Saladict Word 卡）
 // @namespace    swc.local
-// @version      0.8.0
+// @version      0.8.1
 // @description  网页阅读时高亮生词，点击收录单词+上下文，读完后一键批量生成 Anki 卡片（Saladict Word 模型，自动带有道美音发音）
 // @author       local
 // @license      MIT
@@ -218,6 +218,12 @@ function parseTimestamp(s) {
   const m = /^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})$/.exec(String(s == null ? '' : s).trim());
   if (!m) return null;
   return (m[1] ? +m[1] * 3600 : 0) + (+m[2]) * 60 + (+m[3]);
+}
+
+// 面板统计行：Anki 卡数未取到（未连接）时以 — 占位
+function statsLine(knownN, savedN, ankiN) {
+  return '熟词 ' + knownN + ' · 已收藏 ' + savedN + ' · Anki 卡 ' +
+    (ankiN === null || ankiN === undefined ? '—' : ankiN);
 }
 
 // 视频卡补全（asbplayer 桥）：在 Context 中定位 Text 生成挖空句，返回 { cloze, matched } 或 null
@@ -1193,6 +1199,7 @@ function parseTimestamp(s) {
   // ===================== 队列面板与入库 =====================
 
   let panelEl = null, badgeEl = null, ingesting = false;
+  let ankiCardCount = null; // 模型笔记总数，面板打开时异步查询；未连接保持 null
 
   function updateBadge() {
     if (!badgeEl) return;
@@ -1220,6 +1227,7 @@ function parseTimestamp(s) {
     setHtml(el,
       '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#f9690e;color:#fff;">' +
       '<b>生词待办</b><span data-swc-count style="font-size:12px;"></span></div>' +
+      '<div data-swc-stats style="padding:6px 14px;font-size:12px;color:#888;border-bottom:1px solid #f2f2f2;"></div>' +
       '<div data-swc-list style="flex:1;overflow:auto;padding:6px 10px;"></div>' +
       '<div data-swc-progress style="display:none;padding:4px 14px;font-size:12px;color:#888;"></div>' +
       '<div data-swc-bridge style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid #eee;font-size:12px;color:#888;">' +
@@ -1246,6 +1254,8 @@ function parseTimestamp(s) {
     if (!panelEl) return;
     loadQueue();
     panelEl.querySelector('[data-swc-count]').textContent = queue.length + ' 个词待入库';
+    const statsEl = panelEl.querySelector('[data-swc-stats]');
+    if (statsEl) statsEl.textContent = statsLine(knownSet.size, savedSet.size, ankiCardCount);
     const list = panelEl.querySelector('[data-swc-list]');
     if (!queue.length) {
       setHtml(list, '<div style="color:#aaa;text-align:center;padding:30px 0;">队列为空<br>点击页面上高亮的生词即可收录</div>');
@@ -1736,10 +1746,16 @@ function parseTimestamp(s) {
       const ids = await anki('findNotes', { query: 'note:"' + settings.modelName + '" ContextCloze:""' });
       el.textContent = ids.length ? '待补全视频卡 ' + ids.length + ' 张' : '无待补全视频卡';
       if (btn) btn.style.display = ids.length ? '' : 'none';
+      try {
+        ankiCardCount = (await anki('findNotes', { query: 'note:"' + settings.modelName + '"' })).length;
+      } catch (e) { ankiCardCount = null; }
     } catch (e) {
       el.textContent = 'Anki 未连接';
       if (btn) btn.style.display = 'none';
+      ankiCardCount = null;
     }
+    const statsEl = panelEl.querySelector('[data-swc-stats]');
+    if (statsEl) statsEl.textContent = statsLine(knownSet.size, savedSet.size, ankiCardCount);
   }
 
   async function completeVideoCards() {

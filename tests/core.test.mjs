@@ -9,7 +9,7 @@ const src = fs.readFileSync(new URL('../saladict-word-capture.user.js', import.m
 const core = src.split('//<<CORE')[1].split('//CORE>>')[0];
 const fns = new Function(core + `
 return { genCandidates, classifyToken, splitSentences, findWordBounds, extractSentenceAt,
-  clozeify, buildClozeFromContext, parseTimestamp, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
+  clozeify, buildClozeFromContext, parseTimestamp, statsLine, parseYoudaoEc, parseFreeDict, safeFilename, hashStr, yyyymmdd, buildNoteFields,
   sha256Hex, sigv4Headers, amzDateNow, parseS3Endpoint, s3RegionService, buildBackupDump, mergeBackup, xmlErr,
   ossPresignV2, isOssHost, bytesToB64, SWC_MODEL, normPhrase, parsePhraseSelection };`)();
 
@@ -343,6 +343,15 @@ t('ts: 带空白容忍，非法拒绝', () => {
   assert.equal(fns.parseTimestamp('abc'), null);
   assert.equal(fns.parseTimestamp(''), null);
   assert.equal(fns.parseTimestamp(null), null);
+});
+
+// ---- 面板统计行 ----
+t('stats: 三项齐备', () => {
+  assert.equal(fns.statsLine(12, 34, 633), '熟词 12 · 已收藏 34 · Anki 卡 633');
+});
+t('stats: Anki 未连接以 — 占位', () => {
+  assert.equal(fns.statsLine(12, 34, null), '熟词 12 · 已收藏 34 · Anki 卡 —');
+  assert.equal(fns.statsLine(0, 0, undefined), '熟词 0 · 已收藏 0 · Anki 卡 —');
 });
 
 // ---- EPUB 阅读页纯逻辑（epub-viewer.html 同款 CORE 抽取） ----
