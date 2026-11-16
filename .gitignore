@@ -7,3 +7,6 @@
 Thumbs.db
 node_modules
 dist
+
+# 本地测试产物（demo epub 夹具，不入库）
+fixtures/
